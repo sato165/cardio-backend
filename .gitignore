@@ -1,0 +1,32 @@
+# Entorno virtual
+venv/
+
+# Variables de entorno (contiene datos sensibles)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Datos procesados (se regeneran desde el raw)
+data/processed/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# VSCode
+.vscode/
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Distribución
+dist/
+build/
+*.egg-info/
