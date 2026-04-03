@@ -11,9 +11,6 @@ __pycache__/
 *.pyd
 .Python
 
-# Datos procesados (se regeneran desde el raw)
-data/processed/
-
 # Jupyter
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
