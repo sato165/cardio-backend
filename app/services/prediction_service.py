@@ -1,8 +1,6 @@
 """
 prediction_service.py
 Orquesta el flujo completo: preprocesamiento → predicción → explicabilidad.
-Es la única capa que conoce todos los módulos de ml/ y services/.
-Las rutas (routes/) solo llaman a este servicio — nunca importan ml/ directamente.
 """
 
 from pydantic import ValidationError
@@ -11,14 +9,14 @@ from app.ml.preprocessing import preparar_features
 from app.ml.predictor     import predecir
 from app.ml.explainer     import explicar_shap
 from app.schemas.input_schema  import CardiovascularInput
-from app.schemas.output_schema import PredictionOutput, FactorExplicacion, UploadOutput, CampoFaltante
+from app.schemas.output_schema import (
+    PredictionOutput, FactorExplicacion,
+    UploadOutput, CampoFaltante, DatosPaciente,
+)
 
 
 def predecir_desde_formulario(datos: CardiovascularInput) -> PredictionOutput:
-    """
-    Flujo del endpoint POST /api/predict.
-    Recibe los datos ya validados por Pydantic y retorna la predicción completa.
-    """
+    """Flujo del endpoint POST /api/predict."""
     features       = preparar_features(datos)
     resultado      = predecir(features)
     explicabilidad = explicar_shap(features)
@@ -34,23 +32,37 @@ def predecir_desde_formulario(datos: CardiovascularInput) -> PredictionOutput:
 def predecir_desde_extraccion(campos: dict) -> UploadOutput:
     """
     Flujo compartido por los endpoints de JSON y PDF.
-    Recibe el dict extraído por json_extractor o pdf_extractor,
-    verifica campos faltantes y retorna predicción o lista de pendientes.
+    Incluye datos_paciente en la respuesta para el resumen visual del frontend.
     """
     faltantes = campos.get("campos_faltantes", [])
+
+    # Construir DatosPaciente con lo que se extrajo hasta ahora
+    datos_paciente = DatosPaciente(
+        age_days    =campos.get("age_days"),
+        gender      =campos.get("gender"),
+        height      =campos.get("height"),
+        weight      =campos.get("weight"),
+        ap_hi       =campos.get("ap_hi"),
+        ap_lo       =campos.get("ap_lo"),
+        cholesterol =campos.get("cholesterol"),
+        gluc        =campos.get("gluc"),
+        smoke       =campos.get("smoke"),
+        alco        =campos.get("alco"),
+        active      =campos.get("active"),
+    )
 
     if faltantes:
         nombres = [f["campo"] for f in faltantes]
         return UploadOutput(
             campos_faltantes=[CampoFaltante(**f) for f in faltantes],
             prediccion=None,
+            datos_paciente=datos_paciente,
             mensaje=(
                 f"Faltan {len(faltantes)} campo(s) para completar la predicción: "
                 f"{', '.join(nombres)}. Por favor ingréselos manualmente."
             ),
         )
 
-    # Todos los campos presentes — validar rangos antes de predecir
     try:
         input_datos = CardiovascularInput(
             age_days    =campos["age_days"],
@@ -66,8 +78,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             active      =campos["active"],
         )
     except ValidationError as e:
-        # Los valores existen pero están fuera de rango clínico aceptado.
-        # Convertir a lista de campos con descripción legible para el médico.
         campos_invalidos = []
         for error in e.errors():
             campo = str(error["loc"][-1])
@@ -78,6 +88,7 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
         return UploadOutput(
             campos_faltantes=campos_invalidos,
             prediccion=None,
+            datos_paciente=datos_paciente,
             mensaje=(
                 f"{len(campos_invalidos)} campo(s) tienen valores fuera del rango aceptado. "
                 f"Por favor corrija los valores e intente nuevamente."
@@ -89,5 +100,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
     return UploadOutput(
         campos_faltantes=[],
         prediccion=prediccion,
+        datos_paciente=datos_paciente,
         mensaje="Predicción completada exitosamente.",
     )

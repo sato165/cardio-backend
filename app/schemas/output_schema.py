@@ -22,12 +22,30 @@ class CampoFaltante(BaseModel):
     descripcion: str = Field(..., description="Descripción legible para el médico")
 
 
+class DatosPaciente(BaseModel):
+    """Campos extraídos del archivo y usados para la predicción."""
+    age_days:    Optional[int]   = None
+    gender:      Optional[int]   = None
+    height:      Optional[int]   = None
+    weight:      Optional[float] = None
+    ap_hi:       Optional[int]   = None
+    ap_lo:       Optional[int]   = None
+    cholesterol: Optional[int]   = None
+    gluc:        Optional[int]   = None
+    smoke:       Optional[int]   = None
+    alco:        Optional[int]   = None
+    active:      Optional[int]   = None
+
+
 class UploadOutput(BaseModel):
     """
-    Respuesta del endpoint de carga de historia clínica JSON.
+    Respuesta del endpoint de carga de historia clínica JSON o PDF.
     Si hay campos faltantes, la predicción es None y se listan los campos
     que el médico debe completar manualmente antes de reintentar.
+    datos_paciente contiene todos los campos extraídos del archivo para
+    mostrarlos en el resumen visual del frontend.
     """
-    campos_faltantes:      list[CampoFaltante]         = Field(default_factory=list)
-    prediccion:            Optional[PredictionOutput]  = Field(None)
-    mensaje:               str                         = Field(..., description="Mensaje informativo para el médico")
+    campos_faltantes: list[CampoFaltante]        = Field(default_factory=list)
+    prediccion:       Optional[PredictionOutput] = Field(None)
+    mensaje:          str                        = Field(..., description="Mensaje informativo para el médico")
+    datos_paciente:   Optional[DatosPaciente]    = Field(None, description="Campos extraídos del archivo")
