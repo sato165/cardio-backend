@@ -132,6 +132,7 @@ def _parsear_campos(texto: str) -> dict[str, Any]:
     campos: dict[str, Any] = _campos_vacios()
     t = texto.lower()
 
+    # Originales
     campos["age_days"]    = _extraer_age_days(t)
     campos["gender"]      = _extraer_gender(t)
     campos["height"]      = _extraer_height(t)
@@ -144,6 +145,12 @@ def _parsear_campos(texto: str) -> dict[str, Any]:
     campos["alco"]        = _extraer_alco(t)
     campos["active"]      = _extraer_active(t)
 
+    # ---- Nuevos campos opcionales ----
+    campos["colesterol_total_mgdl"] = _extraer_col_total(t)
+    campos["hdl_mgdl"]              = _extraer_hdl(t)
+    campos["diabetes"]              = _extraer_diabetes(t)
+    campos["tratamiento_antihipertensivo"] = _extraer_tratamiento_antiht(t)
+
     return campos
 
 
@@ -154,7 +161,6 @@ def _primero(texto: str, patrones: list[str]):
         if m:
             return m.group(1)
     return None
-
 
 # ---------------------------------------------------------------------------
 # Extractores por campo
@@ -356,6 +362,65 @@ def _extraer_active(t: str) -> int | None:
     if v:
         return int(v)
 
+    return None
+
+def _extraer_col_total(t: str) -> float | None:
+    # Patrones para colesterol total en mg/dL
+    v = _primero(t, [
+        r"colesterol\s*total\s*(?:\(mg/dl\))?\s*[|:\s]+\s*([\d.]+)",
+        r"col\s*total\s*[|:\s]+\s*([\d.]+)\s*mg",
+        r"total\s*cholesterol\s*[|:\s]+\s*([\d.]+)",
+        r"ct\s*[|:\s]+\s*([\d.]+)\s*mg",
+    ])
+    if v:
+        val = float(v)
+        if 50 <= val <= 500:
+            return val
+    return None
+
+
+def _extraer_hdl(t: str) -> float | None:
+    v = _primero(t, [
+        r"hdl\s*(?:colesterol)?\s*(?:\(mg/dl\))?\s*[|:\s]+\s*([\d.]+)",
+        r"colesterol\s*hdl\s*[|:\s]+\s*([\d.]+)",
+        r"hdl\s*cholesterol\s*[|:\s]+\s*([\d.]+)",
+    ])
+    if v:
+        val = float(v)
+        if 15 <= val <= 120:
+            return val
+    return None
+
+
+def _extraer_diabetes(t: str) -> int | None:
+    # Buscar códigos binarios
+    v = _primero(t, [
+        r"diabetes" + SEP + r"([01])",
+        r"diabetico" + SEP + r"([01])",
+    ])
+    if v:
+        return int(v)
+    # Buscar palabras
+    if re.search(r"diabetes\s*(mellitus)?\s*(tipo\s*[12])?\s*:\s*(s[ií]|yes|true|1|positivo)", t):
+        return 1
+    if re.search(r"diabetes\s*:\s*(no|none|false|0|negativo)", t):
+        return 0
+    return None
+
+
+def _extraer_tratamiento_antiht(t: str) -> int | None:
+    v = _primero(t, [
+        r"tratamiento\s*antihipertensivo" + SEP + r"([01])",
+        r"antihipertensivos" + SEP + r"([01])",
+        r"toma\s*antihipertensivos" + SEP + r"([01])",
+        r"hta\s*tratada" + SEP + r"([01])",
+    ])
+    if v:
+        return int(v)
+    if re.search(r"tratamiento\s*antihipertensivo\s*:\s*(s[ií]|yes|true|1)", t):
+        return 1
+    if re.search(r"tratamiento\s*antihipertensivo\s*:\s*(no|none|false|0)", t):
+        return 0
     return None
 
 

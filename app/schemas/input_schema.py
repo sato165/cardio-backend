@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
+from typing import Optional
 
 
 class CardiovascularInput(BaseModel):
@@ -13,6 +14,20 @@ class CardiovascularInput(BaseModel):
     smoke:       int   = Field(..., ge=0, le=1,         description="0 no fuma · 1 fuma")
     alco:        int   = Field(..., ge=0, le=1,         description="0 no consume · 1 consume alcohol")
     active:      int   = Field(..., ge=0, le=1,         description="0 no activo · 1 activo físicamente")
+
+    # --- Campos extra para Framingham (todos opcionales) ---
+    colesterol_total_mgdl: Optional[float] = Field(
+        None, ge=50, le=500, description="Colesterol total en mg/dL"
+    )
+    hdl_mgdl: Optional[float] = Field(
+        None, ge=15, le=120, description="Colesterol HDL en mg/dL"
+    )
+    diabetes: Optional[int] = Field(
+        None, ge=0, le=1, description="0 no diabético · 1 diabético"
+    )
+    tratamiento_antihipertensivo: Optional[int] = Field(
+        None, ge=0, le=1, description="0 no tratado · 1 tratado"
+    )
 
     @model_validator(mode="after")
     def validar_presion(self) -> "CardiovascularInput":

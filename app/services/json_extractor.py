@@ -11,7 +11,7 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Campos requeridos y sus descripciones para el médico
+# Campos requeridos (originales) para la predicción del modelo
 # ---------------------------------------------------------------------------
 
 CAMPOS_REQUERIDOS = {
@@ -41,6 +41,23 @@ _ALIAS: dict[str, list[str]] = {
     "smoke":       ["smoke", "fuma_actualmente", "smoking", "tabaquismo"],
     "alco":        ["alco", "consume_alcohol", "alcohol", "drinking"],
     "active":      ["active", "actividad_fisica", "physically_active", "ejercicio"],
+    # --- Nuevos campos opcionales para Framingham ---
+    "colesterol_total_mgdl": [
+        "colesterol_total_mgdl", "colesterol_total", "total_cholesterol",
+        "col_total", "ct_mgdl", "colesterol_total_mg_dl"
+    ],
+    "hdl_mgdl": [
+        "hdl_mgdl", "hdl", "hdl_colesterol", "hdl_cholesterol",
+        "colesterol_hdl", "hdl_mg_dl"
+    ],
+    "diabetes": [
+        "diabetes", "diabetico", "diabetes_mellitus", "dm", "es_diabetico",
+        "diagnostico_diabetes"
+    ],
+    "tratamiento_antihipertensivo": [
+        "tratamiento_antihipertensivo", "antihipertensivos", "toma_antihipertensivos",
+        "tratamiento_hta", "medicacion_antihipertensiva", "hta_tratada"
+    ],
 }
 
 # Rutas anidadas donde suelen vivir los campos en JSONs de sistemas HIS
@@ -51,6 +68,8 @@ _RUTAS_ANIDADAS = [
     "datos_antropometricos",
     "examenes_laboratorio",
     "habitos_vida",
+    "antecedentes",
+    "medicacion_actual",
 ]
 
 
@@ -63,7 +82,11 @@ def extraer_de_json(datos: dict) -> dict[str, Any]:
     Recibe el dict del JSON de historia clínica y retorna los campos
     del modelo. Los campos no encontrados quedan en None.
     """
-    campos: dict[str, Any] = {campo: None for campo in CAMPOS_REQUERIDOS}
+    # Incluimos todos los campos (originales + nuevos opcionales)
+    todos_los_campos = list(CAMPOS_REQUERIDOS.keys()) + [
+        "colesterol_total_mgdl", "hdl_mgdl", "diabetes", "tratamiento_antihipertensivo"
+    ]
+    campos: dict[str, Any] = {campo: None for campo in todos_los_campos}
 
     # 1. Buscar en la raíz y en las secciones anidadas conocidas
     fuentes = [datos] + [
@@ -83,7 +106,7 @@ def extraer_de_json(datos: dict) -> dict[str, Any]:
     if campos["age_days"] is None:
         campos["age_days"] = _derivar_edad_desde_fecha(datos)
 
-    # 3. Listar campos faltantes
+    # 3. Listar campos faltantes **solo para los requeridos**
     campos["campos_faltantes"] = [
         {"campo": k, "descripcion": CAMPOS_REQUERIDOS[k]}
         for k in CAMPOS_REQUERIDOS
@@ -109,8 +132,10 @@ def _normalizar(campo: str, valor: Any) -> Any:
     """
     Convierte el valor al tipo esperado por el modelo.
     Los campos binarios aceptan bool, string o int.
+    Los nuevos campos numéricos se convierten a float.
     """
-    binarios = {"smoke", "alco", "active"}
+    # Campos binarios originales + diabetes, tratamiento_antihipertensivo
+    binarios = {"smoke", "alco", "active", "diabetes", "tratamiento_antihipertensivo"}
 
     if campo in binarios:
         if isinstance(valor, bool):
@@ -122,7 +147,7 @@ def _normalizar(campo: str, valor: Any) -> Any:
     if campo in {"age_days", "gender", "height", "cholesterol", "gluc"}:
         return int(valor) if valor is not None else None
 
-    if campo in {"weight"}:
+    if campo in {"weight", "colesterol_total_mgdl", "hdl_mgdl"}:
         return float(valor) if valor is not None else None
 
     if campo in {"ap_hi", "ap_lo"}:

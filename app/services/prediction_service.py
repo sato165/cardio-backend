@@ -1,6 +1,7 @@
 """
 prediction_service.py
-Orquesta el flujo completo: preprocesamiento → predicción → explicabilidad.
+Orquesta el flujo completo: preprocesamiento → predicción → explicabilidad
+y añade los cálculos de Framingham 2008 y SCC Colombia si hay datos suficientes.
 """
 
 from pydantic import ValidationError
@@ -12,7 +13,10 @@ from app.schemas.input_schema  import CardiovascularInput
 from app.schemas.output_schema import (
     PredictionOutput, FactorExplicacion,
     UploadOutput, CampoFaltante, DatosPaciente,
+    RiesgoComparativo,
 )
+from app.ml.framingham_calculator import calcular_framingham, campos_faltantes_framingham
+from app.ml.scc_calculator import calcular_scc
 
 
 def predecir_desde_formulario(datos: CardiovascularInput) -> PredictionOutput:
@@ -21,11 +25,15 @@ def predecir_desde_formulario(datos: CardiovascularInput) -> PredictionOutput:
     resultado      = predecir(features)
     explicabilidad = explicar_shap(features)
 
+    # Intenta construir el comparativo Framingham / SCC
+    riesgo_comparativo = _calcular_comparativo(datos)
+
     return PredictionOutput(
         riesgo_cardiovascular=resultado["clase"],
         probabilidad=resultado["probabilidad"],
         nivel_riesgo=resultado["nivel_riesgo"],
         explicabilidad=[FactorExplicacion(**f) for f in explicabilidad],
+        riesgo_comparativo=riesgo_comparativo,
     )
 
 
@@ -49,10 +57,17 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
         smoke       =campos.get("smoke"),
         alco        =campos.get("alco"),
         active      =campos.get("active"),
+        # Extraemos los nuevos campos opcionales
+        colesterol_total_mgdl=campos.get("colesterol_total_mgdl"),
+        hdl_mgdl=campos.get("hdl_mgdl"),
+        diabetes=campos.get("diabetes"),
+        tratamiento_antihipertensivo=campos.get("tratamiento_antihipertensivo"),
     )
 
     if faltantes:
         nombres = [f["campo"] for f in faltantes]
+        # Podríamos intentar calcular Framingham/SCC incluso con datos parciales?
+        # Por ahora no, porque faltan campos esenciales para nuestro modelo.
         return UploadOutput(
             campos_faltantes=[CampoFaltante(**f) for f in faltantes],
             prediccion=None,
@@ -63,6 +78,7 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             ),
         )
 
+    # Validar y construir objeto CardiovascularInput para la predicción
     try:
         input_datos = CardiovascularInput(
             age_days    =campos["age_days"],
@@ -76,6 +92,11 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             smoke       =campos["smoke"],
             alco        =campos["alco"],
             active      =campos["active"],
+            # Pasar opcionales (si vienen en el dict)
+            colesterol_total_mgdl=campos.get("colesterol_total_mgdl"),
+            hdl_mgdl=campos.get("hdl_mgdl"),
+            diabetes=campos.get("diabetes"),
+            tratamiento_antihipertensivo=campos.get("tratamiento_antihipertensivo"),
         )
     except ValidationError as e:
         campos_invalidos = []
@@ -102,4 +123,62 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
         prediccion=prediccion,
         datos_paciente=datos_paciente,
         mensaje="Predicción completada exitosamente.",
+    )
+
+def _calcular_comparativo(datos: CardiovascularInput) -> RiesgoComparativo:
+    edad = round(datos.age_days / 365.25)
+
+    # Verificar datos necesarios para Framingham
+    datos_fram = {
+        "colesterol_total_mgdl": datos.colesterol_total_mgdl,
+        "hdl_mgdl": datos.hdl_mgdl,
+        "diabetes": datos.diabetes,
+        "tratamiento_hta": datos.tratamiento_antihipertensivo,
+    }
+    faltantes = campos_faltantes_framingham(datos_fram)
+    if faltantes:
+        return RiesgoComparativo(
+            datos_suficientes=False,
+            campos_faltantes_framingham=[f["campo"] for f in faltantes],
+        )
+
+    # Llamar a Framingham con tu nueva función
+    fram = calcular_framingham(
+        edad=edad,
+        sexo=datos.gender,
+        colesterol_total=datos.colesterol_total_mgdl,
+        hdl=datos.hdl_mgdl,
+        presion_sistolica=datos.ap_hi,
+        tratamiento_antihipertensivo=bool(datos.tratamiento_antihipertensivo),
+        fuma=bool(datos.smoke),
+        diabetes=bool(datos.diabetes),
+    )
+
+    if not fram["aplicable"]:
+        return RiesgoComparativo(
+            datos_suficientes=False,
+            mensaje_no_aplicable=fram["descripcion"],
+        )
+
+    scc = calcular_scc(
+        edad=edad,
+        sexo=datos.gender,
+        colesterol_total=datos.colesterol_total_mgdl,
+        hdl=datos.hdl_mgdl,
+        presion_sistolica=datos.ap_hi,
+        tratamiento_antihipertensivo=bool(datos.tratamiento_antihipertensivo),
+        fuma=bool(datos.smoke),
+        diabetes=bool(datos.diabetes),
+    )
+
+    return RiesgoComparativo(
+        framingham_porcentaje=fram["porcentaje"],
+        framingham_nivel=fram["nivel"],
+        framingham_descripcion=fram["descripcion"],
+        scc_porcentaje=scc["porcentaje_scc"],
+        scc_porcentaje_framingham=scc["porcentaje_framingham"],
+        scc_nivel=scc["nivel"],
+        scc_descripcion=scc["descripcion"],
+        factor_ajuste=scc["factor_ajuste"],
+        datos_suficientes=True,
     )

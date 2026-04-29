@@ -10,11 +10,37 @@ class FactorExplicacion(BaseModel):
     advertencia: Optional[str] = Field(None, description="Advertencia de sesgo si aplica (smoke, alco)")
 
 
+class RiesgoComparativo(BaseModel):
+    """Resultados de los tres modelos de riesgo cardiovascular."""
+    framingham_porcentaje: Optional[float] = Field(
+        None, description="Porcentaje de riesgo a 10 años según Framingham 2008"
+    )
+    framingham_nivel: Optional[str] = Field(
+        None, description="Bajo (<10%) | Moderado (10-20%) | Alto (>20%)"
+    )
+    scc_porcentaje: Optional[float] = Field(
+        None, description="Porcentaje de riesgo según la Sociedad Colombiana de Cardiología (Framingham × 0.75)"
+    )
+    scc_nivel: Optional[str] = Field(
+        None, description="Bajo | Moderado | Alto (mismos umbrales)"
+    )
+    datos_suficientes: bool = Field(
+        ..., description="Indica si se dispuso de todos los datos para calcular Framingham/SCC"
+    )
+    campos_faltantes_framingham: list[str] = Field(
+        default_factory=list,
+        description="Lista de campos requeridos que no fueron proporcionados"
+    )
+
+
 class PredictionOutput(BaseModel):
     riesgo_cardiovascular: int   = Field(..., description="0 = bajo riesgo · 1 = alto riesgo")
     probabilidad:          float = Field(..., description="Probabilidad de riesgo entre 0 y 1")
     nivel_riesgo:          str   = Field(..., description="'Alto' | 'Moderado' | 'Bajo'")
     explicabilidad:        list[FactorExplicacion] = Field(..., description="Factores ordenados por impacto absoluto")
+    riesgo_comparativo:    Optional[RiesgoComparativo] = Field(
+        None, description="Resultados de Framingham y SCC si los datos están disponibles"
+    )
 
 
 class CampoFaltante(BaseModel):
@@ -35,6 +61,11 @@ class DatosPaciente(BaseModel):
     smoke:       Optional[int]   = None
     alco:        Optional[int]   = None
     active:      Optional[int]   = None
+    # Campos extra Framingham
+    colesterol_total_mgdl: Optional[float] = None
+    hdl_mgdl: Optional[float] = None
+    diabetes: Optional[int] = None
+    tratamiento_antihipertensivo: Optional[int] = None
 
 
 class UploadOutput(BaseModel):
