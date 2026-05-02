@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    best_model: str = "random_forest"
+    best_model: str = "xgboost_model"
     model_rf_path: str = "models/random_forest.pkl"
     model_xgb_path: str = "models/xgboost_model.pkl"
     debug: bool = True
