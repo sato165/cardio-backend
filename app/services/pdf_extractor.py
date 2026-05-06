@@ -1,11 +1,10 @@
-"""
+r"""
 pdf_extractor.py
 Extrae los campos del modelo desde historias clínicas en PDF.
 
-Soporta tres tipos de PDF:
+Soporta dos tipos de PDF:
   - Tipo 1: texto nativo simple       → PyMuPDF (fitz)
   - Tipo 2: texto nativo con tablas   → pdfplumber
-  - Tipo 3: escaneado (solo imágenes) → pdf2image + pytesseract
 
 pdfplumber genera dos formatos en la misma cadena de texto:
   - Texto libre:  "altura (cm) 172"
@@ -18,13 +17,6 @@ import fitz
 import pdfplumber
 import io
 from typing import Any
-
-try:
-    import pytesseract
-    from pdf2image import convert_from_bytes
-    OCR_DISPONIBLE = True
-except ImportError:
-    OCR_DISPONIBLE = False
 
 MIN_CHARS_TEXTO = 50
 
@@ -51,24 +43,14 @@ def extraer_de_pdfs(archivos_bytes: list[bytes]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Detección de tipo
+# Detección de tipo (sin OCR)
 # ---------------------------------------------------------------------------
 
 def _detectar_tipo(pdf_bytes: bytes) -> str:
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        chars_totales = sum(len(page.get_text()) for page in doc)
-        num_paginas   = len(doc)
-        doc.close()
-
-        if chars_totales < MIN_CHARS_TEXTO * num_paginas:
-            return "escaneado"
-
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             tiene_tablas = any(page.extract_tables() for page in pdf.pages)
-
         return "texto_tablas" if tiene_tablas else "texto_simple"
-
     except Exception:
         return "texto_simple"
 
@@ -78,9 +60,7 @@ def _detectar_tipo(pdf_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 def _extraer_texto(pdf_bytes: bytes, tipo: str) -> str:
-    if tipo == "escaneado":
-        return _extraer_texto_ocr(pdf_bytes)
-    elif tipo == "texto_tablas":
+    if tipo == "texto_tablas":
         return _extraer_texto_tablas(pdf_bytes)
     return _extraer_texto_simple(pdf_bytes)
 
@@ -93,10 +73,10 @@ def _extraer_texto_simple(pdf_bytes: bytes) -> str:
 
 
 def _extraer_texto_tablas(pdf_bytes: bytes) -> str:
-    """
+    r"""
     Combina texto libre y filas de tabla en un solo string.
     Resultado: mezcla de "label valor" y "label | valor | ..."
-    Los patrones usan [|\\s]+ como separador para cubrir ambos.
+    Los patrones usan [|\s]+ como separador para cubrir ambos.
     """
     partes = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -106,18 +86,6 @@ def _extraer_texto_tablas(pdf_bytes: bytes) -> str:
             for tabla in page.extract_tables():
                 for fila in tabla:
                     partes.append(" | ".join(str(c) if c else "" for c in fila))
-    return "\n".join(partes)
-
-
-def _extraer_texto_ocr(pdf_bytes: bytes) -> str:
-    if not OCR_DISPONIBLE:
-        return ""
-    imagenes = convert_from_bytes(pdf_bytes, dpi=300)
-    partes   = []
-    for imagen in imagenes:
-        texto = pytesseract.image_to_string(imagen, lang="spa+eng", config="--psm 6")
-        if len(texto.strip()) >= MIN_CHARS_TEXTO:
-            partes.append(texto)
     return "\n".join(partes)
 
 
