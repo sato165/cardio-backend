@@ -1,3 +1,5 @@
+# upload.py 
+
 import json
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
@@ -14,14 +16,17 @@ BYTES_POR_MB = 1_048_576
 
 
 def _aplicar_campos_manuales(campos: dict, manuales: dict) -> dict:
-    """Rellena los campos faltantes con los valores ingresados manualmente."""
+    """Rellena los campos faltantes (requeridos y opcionales) con valores manuales."""
     for clave, valor in manuales.items():
-        if valor is not None and campos.get(clave) is None:
-            try:
-                campos[clave] = int(valor) if '.' not in str(valor) else float(valor)
-            except (ValueError, TypeError):
-                pass
-    # Recalcular campos_faltantes tras completar
+        if valor is not None:
+            # Solo rellenamos si el campo no existe o es None
+            if campos.get(clave) is None:
+                try:
+                    # Convertir a número si corresponde
+                    campos[clave] = int(valor) if '.' not in str(valor) else float(valor)
+                except (ValueError, TypeError):
+                    pass
+    # Recalcular campos_faltantes (solo los requeridos del modelo principal)
     from app.services.json_extractor import CAMPOS_REQUERIDOS
     campos['campos_faltantes'] = [
         {'campo': k, 'descripcion': CAMPOS_REQUERIDOS[k]}
@@ -40,6 +45,7 @@ def _aplicar_campos_manuales(campos: dict, manuales: dict) -> dict:
 )
 async def predict_upload_json(
     archivo: UploadFile = File(...),
+    # Parámetros requeridos originales
     ap_lo:       Optional[float] = Query(None),
     ap_hi:       Optional[float] = Query(None),
     age_days:    Optional[int]   = Query(None),
@@ -51,6 +57,11 @@ async def predict_upload_json(
     smoke:       Optional[int]   = Query(None),
     alco:        Optional[int]   = Query(None),
     active:      Optional[int]   = Query(None),
+    # NUEVOS: parámetros opcionales para Framingham
+    colesterol_total_mgdl:      Optional[float] = Query(None),
+    hdl_mgdl:                   Optional[float] = Query(None),
+    diabetes:                   Optional[int]   = Query(None),
+    tratamiento_antihipertensivo: Optional[int] = Query(None),
 ) -> UploadOutput:
     _validar_tamano(archivo, settings.max_upload_size_mb)
     _validar_extension(archivo.filename, ['.json'])
@@ -68,12 +79,18 @@ async def predict_upload_json(
         'gender': gender, 'height': height, 'weight': weight,
         'cholesterol': cholesterol, 'gluc': gluc,
         'smoke': smoke, 'alco': alco, 'active': active,
+        # Agregamos los de Framingham
+        'colesterol_total_mgdl': colesterol_total_mgdl,
+        'hdl_mgdl': hdl_mgdl,
+        'diabetes': diabetes,
+        'tratamiento_antihipertensivo': tratamiento_antihipertensivo,
     }.items() if v is not None}
 
     if manuales:
         campos = _aplicar_campos_manuales(campos, manuales)
 
-    return predecir_desde_extraccion(campos)
+    result = predecir_desde_extraccion(campos)
+    return result
 
 
 # ── PDF ───────────────────────────────────────────────────────────────────────
@@ -96,6 +113,11 @@ async def predict_upload_pdf(
     smoke:       Optional[int]   = Query(None),
     alco:        Optional[int]   = Query(None),
     active:      Optional[int]   = Query(None),
+    # NUEVOS parámetros Framingham
+    colesterol_total_mgdl:      Optional[float] = Query(None),
+    hdl_mgdl:                   Optional[float] = Query(None),
+    diabetes:                   Optional[int]   = Query(None),
+    tratamiento_antihipertensivo: Optional[int] = Query(None),
 ) -> UploadOutput:
     if len(archivos) > 5:
         raise HTTPException(status_code=422, detail='Se permiten máximo 5 PDFs por solicitud.')
@@ -113,12 +135,17 @@ async def predict_upload_pdf(
         'gender': gender, 'height': height, 'weight': weight,
         'cholesterol': cholesterol, 'gluc': gluc,
         'smoke': smoke, 'alco': alco, 'active': active,
+        'colesterol_total_mgdl': colesterol_total_mgdl,
+        'hdl_mgdl': hdl_mgdl,
+        'diabetes': diabetes,
+        'tratamiento_antihipertensivo': tratamiento_antihipertensivo,
     }.items() if v is not None}
 
     if manuales:
         campos = _aplicar_campos_manuales(campos, manuales)
 
-    return predecir_desde_extraccion(campos)
+    result = predecir_desde_extraccion(campos)
+    return result
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+# prediction_service.py 
+
 """
 prediction_service.py
 Orquesta el flujo completo: preprocesamiento → predicción → explicabilidad
@@ -57,7 +59,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
         smoke       =campos.get("smoke"),
         alco        =campos.get("alco"),
         active      =campos.get("active"),
-        # Extraemos los nuevos campos opcionales
         colesterol_total_mgdl=campos.get("colesterol_total_mgdl"),
         hdl_mgdl=campos.get("hdl_mgdl"),
         diabetes=campos.get("diabetes"),
@@ -66,8 +67,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
 
     if faltantes:
         nombres = [f["campo"] for f in faltantes]
-        # Podríamos intentar calcular Framingham/SCC incluso con datos parciales?
-        # Por ahora no, porque faltan campos esenciales para nuestro modelo.
         return UploadOutput(
             campos_faltantes=[CampoFaltante(**f) for f in faltantes],
             prediccion=None,
@@ -92,7 +91,7 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             smoke       =campos["smoke"],
             alco        =campos["alco"],
             active      =campos["active"],
-            # Pasar opcionales (si vienen en el dict)
+            # Opcionales (pueden ser None)
             colesterol_total_mgdl=campos.get("colesterol_total_mgdl"),
             hdl_mgdl=campos.get("hdl_mgdl"),
             diabetes=campos.get("diabetes"),
@@ -115,14 +114,44 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
                 f"Por favor corrija los valores e intente nuevamente."
             ),
         )
-
     prediccion = predecir_desde_formulario(input_datos)
 
+    # Determinar si hacen falta datos para Framingham
+    framingham_faltante = None
+    if (prediccion.riesgo_comparativo and
+        not prediccion.riesgo_comparativo.datos_suficientes and
+        prediccion.riesgo_comparativo.campos_faltantes_framingham):
+        
+        # Mapeo de nombres internos a nombres de parámetros que espera upload.py
+        mapeo_campos = {
+            "colesterol_total_mgdl": "colesterol_total_mgdl",
+            "hdl_mgdl": "hdl_mgdl",
+            "diabetes": "diabetes",
+            "tratamiento_hta": "tratamiento_antihipertensivo",
+            "tratamiento_antihipertensivo": "tratamiento_antihipertensivo",
+        }
+        descripciones = {
+            "colesterol_total_mgdl": "Colesterol total (mg/dL)",
+            "hdl_mgdl": "Colesterol HDL (mg/dL)",
+            "diabetes": "Diabetes",
+            "tratamiento_hta": "Tratamiento antihipertensivo",
+            "tratamiento_antihipertensivo": "Tratamiento antihipertensivo",
+        }
+        
+        framingham_faltante = [
+            CampoFaltante(
+                campo=mapeo_campos.get(nombre, nombre),
+                descripcion=descripciones.get(nombre, nombre)
+            )
+            for nombre in prediccion.riesgo_comparativo.campos_faltantes_framingham
+        ]
+        
     return UploadOutput(
         campos_faltantes=[],
         prediccion=prediccion,
         datos_paciente=datos_paciente,
         mensaje="Predicción completada exitosamente.",
+        framingham_faltante=framingham_faltante,
     )
 
 def _calcular_comparativo(datos: CardiovascularInput) -> RiesgoComparativo:

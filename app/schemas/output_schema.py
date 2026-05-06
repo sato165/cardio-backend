@@ -80,3 +80,4 @@ class UploadOutput(BaseModel):
     prediccion:       Optional[PredictionOutput] = Field(None)
     mensaje:          str                        = Field(..., description="Mensaje informativo para el médico")
     datos_paciente:   Optional[DatosPaciente]    = Field(None, description="Campos extraídos del archivo")
+    framingham_faltante: Optional[list[CampoFaltante]] = None
