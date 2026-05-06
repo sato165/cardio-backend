@@ -9,8 +9,8 @@ from app.api.router import router
 
 app = FastAPI(
     title="CardioPredict API",
-    description="API para predicción de riesgo cardiovascular con explicabilidad para médicos.",
-    version="1.0.0",
+    description="API para predicción de riesgo cardiovascular mediante clustering con inteligencia artificial.",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -55,7 +55,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 @app.exception_handler(ValidationError)
 async def pydantic_error_handler(request: Request, exc: ValidationError):
     """
-    ValidationError lanzado desde prediction_service al construir CardiovascularInput
+    ValidationError lanzado desde prediction_service al construir PredictionInput
     con valores extraídos de un JSON o PDF que pasan el check de campos faltantes
     pero tienen valores fuera de rango.
     """
@@ -74,9 +74,8 @@ async def pydantic_error_handler(request: Request, exc: ValidationError):
             "error":   "Los valores extraídos del archivo no son válidos para el modelo",
             "detalle": errores,
             "sugerencia": (
-                "Verifique que los valores estén dentro de los rangos aceptados: "
-                "presión sistólica 60–250 mmHg, diastólica 40–200 mmHg, "
-                "altura 140–220 cm, peso 30–180 kg."
+                "Verifique que los valores estén dentro de los rangos clínicos aceptados "
+                "para cada una de las 22 variables (creatinina, glucosa, presión arterial, etc.)."
             ),
         },
     )
@@ -84,13 +83,16 @@ async def pydantic_error_handler(request: Request, exc: ValidationError):
 
 @app.exception_handler(FileNotFoundError)
 async def model_not_found_handler(request: Request, exc: FileNotFoundError):
-    """El archivo .pkl del modelo no existe en la ruta configurada en .env."""
+    """Uno o más artefactos (modelo, scaler, pca) no se encuentran en disco."""
     return JSONResponse(
         status_code=503,
         content={
-            "error":      "Modelo no disponible",
+            "error":      "Modelo o artefactos no disponibles",
             "detalle":    str(exc),
-            "sugerencia": "Verifique que los archivos .pkl estén en la carpeta models/ y que MODEL_RF_PATH / MODEL_XGB_PATH en .env sean correctos.",
+            "sugerencia": (
+                "Verifique que los archivos random_forest.pkl, scaler.pkl y pca.pkl "
+                "estén en la carpeta models/ y que las rutas en .env sean correctas."
+            ),
         },
     )
 
@@ -109,4 +111,4 @@ async def generic_error_handler(request: Request, exc: Exception):
 
 @app.get("/api/health", tags=["Health"])
 def health_check():
-    return {"status": "ok", "model_activo": settings.best_model}
+    return {"status": "ok", "modelo": "RandomForest con clustering PCA"}

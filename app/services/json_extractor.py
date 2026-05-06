@@ -1,98 +1,113 @@
 """
 json_extractor.py
-Extrae los campos del modelo desde una historia clínica en formato JSON.
+Extrae los 22 campos del modelo real desde una historia clínica en JSON.
 
-El JSON puede venir de cualquier sistema HIS con estructura variable.
-El extractor busca los campos por múltiples nombres posibles y por rutas
-anidadas. El resultado tiene el mismo formato que pdf_extractor.py.
+Busca por múltiples alias y en secciones anidadas típicas de HIS.
+Los campos opcionales de Framingham se extraen si están presentes.
 """
 
-from typing import Any
-
+from typing import Any, Optional
+from datetime import date
 
 # ---------------------------------------------------------------------------
-# Campos requeridos (originales) para la predicción del modelo
+# 22 campos obligatorios del nuevo modelo (dataset real Colombia)
 # ---------------------------------------------------------------------------
-
-CAMPOS_REQUERIDOS = {
-    "age_days":    "Edad (en años o días)",
-    "gender":      "Género (masculino / femenino)",
-    "height":      "Altura (cm)",
-    "weight":      "Peso (kg)",
-    "ap_hi":       "Presión sistólica (mmHg)",
-    "ap_lo":       "Presión diastólica (mmHg)",
-    "cholesterol": "Colesterol (normal / alto / muy alto)",
-    "gluc":        "Glucosa (normal / alta / muy alta)",
-    "smoke":       "Tabaquismo (sí / no)",
-    "alco":        "Consumo de alcohol (sí / no)",
-    "active":      "Actividad física (sí / no)",
+CAMPOS_OBLIGATORIOS = {
+    "creatinina":          "Creatinina sérica (mg/dL)",
+    "celulas_medias":      "Volumen corpuscular medio (fL)",
+    "glucosa":             "Glucosa en ayunas (mg/dL)",
+    "granulocitos":        "Granulocitos (%)",
+    "hdl":                 "Colesterol HDL (mg/dL)",
+    "hematocrito":         "Hematocrito (%)",
+    "hemoglobina":         "Hemoglobina (g/dL)",
+    "ldl":                 "Colesterol LDL (mg/dL)",
+    "leucocitos":          "Leucocitos (10³/µL)",
+    "linfocitos":          "Linfocitos (%)",
+    "plaquetas":           "Plaquetas (10³/µL)",
+    "trigliceridos":       "Triglicéridos (mg/dL)",
+    "edad":                "Edad (años)",
+    "sexo":                "Sexo (0=mujer, 1=hombre)",
+    "zona":                "Zona (0=rural, 1=urbana)",
+    "ap_hipertension":     "Antecedente personal de hipertensión (0/1)",
+    "ta_sistolica":        "Presión sistólica (mmHg)",
+    "ta_diastolica":       "Presión diastólica (mmHg)",
+    "peso":                "Peso (kg)",
+    "talla":               "Talla (m)",
+    "imc":                 "Índice de Masa Corporal (kg/m²)",
+    "TFG":                 "Tasa de Filtración Glomerular (mL/min/1.73m²)",
 }
 
-# Nombres alternativos por los que puede venir cada campo en el JSON
+# 4 campos opcionales para Framingham / SCC
+CAMPOS_OPCIONALES = {
+    "colesterol_total_mgdl":      "Colesterol total (mg/dL)",
+    "diabetes":                   "Diabetes mellitus (0/1)",
+    "tratamiento_antihipertensivo": "Tratamiento antihipertensivo (0/1)",
+    "fuma":                       "Fumador actual (0/1)",
+}
+
+# Aliases para búsqueda flexible
 _ALIAS: dict[str, list[str]] = {
-    "age_days":    ["age_days", "edad_dias", "edad_en_dias", "age"],
-    "gender":      ["gender", "genero_codigo", "gender_code", "sexo_codigo"],
-    "height":      ["height", "height_cm", "altura_cm", "talla_cm"],
-    "weight":      ["weight", "weight_kg", "peso_kg"],
-    "ap_hi":       ["ap_hi", "presion_sistolica_mmhg", "systolic", "sistolica"],
-    "ap_lo":       ["ap_lo", "presion_diastolica_mmhg", "diastolic", "diastolica"],
-    "cholesterol": ["cholesterol", "colesterol_codigo_modelo", "cholesterol_code"],
-    "gluc":        ["gluc", "glucosa_codigo_modelo", "glucose_code"],
-    "smoke":       ["smoke", "fuma_actualmente", "smoking", "tabaquismo"],
-    "alco":        ["alco", "consume_alcohol", "alcohol", "drinking"],
-    "active":      ["active", "actividad_fisica", "physically_active", "ejercicio"],
-    # --- Nuevos campos opcionales para Framingham ---
-    "colesterol_total_mgdl": [
-        "colesterol_total_mgdl", "colesterol_total", "total_cholesterol",
-        "col_total", "ct_mgdl", "colesterol_total_mg_dl"
-    ],
-    "hdl_mgdl": [
-        "hdl_mgdl", "hdl", "hdl_colesterol", "hdl_cholesterol",
-        "colesterol_hdl", "hdl_mg_dl"
-    ],
-    "diabetes": [
-        "diabetes", "diabetico", "diabetes_mellitus", "dm", "es_diabetico",
-        "diagnostico_diabetes"
-    ],
+    # Laboratorio
+    "creatinina":          ["creatinina", "creatinina_serica", "creatinina_mgdl", "serum_creatinine"],
+    "celulas_medias":      ["celulas_medias", "volumen_corpuscular_medio", "vcm", "mcv"],
+    "glucosa":             ["glucosa", "glucosa_ayunas", "glucose", "glucosa_mgdl", "gluc", "glicemia"],
+    "granulocitos":        ["granulocitos", "granulocitos_porcentaje", "granulocytes_pct"],
+    "hdl":                 ["hdl", "hdl_colesterol", "colesterol_hdl", "hdl_mgdl", "hdl_cholesterol"],
+    "hematocrito":         ["hematocrito", "hematocrito_pct", "hematocrit", "hct"],
+    "hemoglobina":         ["hemoglobina", "hemoglobina_gdl", "hemoglobin", "hb"],
+    "ldl":                 ["ldl", "ldl_colesterol", "colesterol_ldl", "ldl_mgdl", "ldl_cholesterol"],
+    "leucocitos":          ["leucocitos", "leucocitos_103ul", "leucocytes", "wbc", "white_blood_cells"],
+    "linfocitos":          ["linfocitos", "linfocitos_porcentaje", "lymphocytes_pct"],
+    "plaquetas":           ["plaquetas", "plaquetas_103ul", "platelets", "plt"],
+    "trigliceridos":       ["trigliceridos", "trigliceridos_mgdl", "triglycerides", "tg"],
+    # Demográficos
+    "edad":                ["edad", "edad_anos", "age", "edad_paciente"],
+    "sexo":                ["sexo", "sexo_codigo", "gender", "genero_codigo"],
+    "zona":                ["zona", "zona_residencia", "area", "rural_urbano"],
+    "ap_hipertension":     ["ap_hipertension", "antecedente_hipertension", "hipertension_arterial", "hta_personal"],
+    # Signos vitales y antropometría
+    "ta_sistolica":        ["ta_sistolica", "presion_sistolica", "sistolica", "systolic", "ap_hi", "pas"],
+    "ta_diastolica":       ["ta_diastolica", "presion_diastolica", "diastolica", "diastolic", "ap_lo", "pad"],
+    "peso":                ["peso", "peso_kg", "weight", "weight_kg"],
+    "talla":               ["talla", "talla_m", "height", "altura", "estatura"],
+    "imc":                 ["imc", "bmi", "indice_masa_corporal", "body_mass_index"],
+    "TFG":                 ["tfg", "tfge", "filtracion_glomerular", "egfr", "gfr"],
+    # Opcionales Framingham
+    "colesterol_total_mgdl": ["colesterol_total_mgdl", "colesterol_total", "ct", "total_cholesterol"],
+    "diabetes":             ["diabetes", "diabetico", "dm", "diabetes_mellitus"],
     "tratamiento_antihipertensivo": [
-        "tratamiento_antihipertensivo", "antihipertensivos", "toma_antihipertensivos",
-        "tratamiento_hta", "medicacion_antihipertensiva", "hta_tratada"
+        "tratamiento_antihipertensivo", "antihipertensivos", "toma_antihipertensivos", "hta_tratada"
     ],
+    "fuma":                ["fuma", "fumador", "smoke", "smoking", "tabaquismo", "cigarrillo"],
 }
 
-# Rutas anidadas donde suelen vivir los campos en JSONs de sistemas HIS
 _RUTAS_ANIDADAS = [
     "campos_modelo_ia",
     "identificacion_paciente",
     "signos_vitales",
     "datos_antropometricos",
     "examenes_laboratorio",
+    "laboratorio",
+    "quimica_sanguinea",
+    "hemograma",
+    "perfil_lipidico",
+    "funcion_renal",
     "habitos_vida",
     "antecedentes",
     "medicacion_actual",
 ]
 
 
-# ---------------------------------------------------------------------------
-# Punto de entrada público
-# ---------------------------------------------------------------------------
-
 def extraer_de_json(datos: dict) -> dict[str, Any]:
     """
-    Recibe el dict del JSON de historia clínica y retorna los campos
-    del modelo. Los campos no encontrados quedan en None.
+    Busca los 22 campos obligatorios + 4 opcionales en el JSON.
+    Retorna dict con campos encontrados + lista de faltantes.
     """
-    # Incluimos todos los campos (originales + nuevos opcionales)
-    todos_los_campos = list(CAMPOS_REQUERIDOS.keys()) + [
-        "colesterol_total_mgdl", "hdl_mgdl", "diabetes", "tratamiento_antihipertensivo"
-    ]
-    campos: dict[str, Any] = {campo: None for campo in todos_los_campos}
+    todos = list(CAMPOS_OBLIGATORIOS.keys()) + list(CAMPOS_OPCIONALES.keys())
+    campos = {campo: None for campo in todos}
 
-    # 1. Buscar en la raíz y en las secciones anidadas conocidas
     fuentes = [datos] + [
-        datos[seccion]
-        for seccion in _RUTAS_ANIDADAS
-        if isinstance(datos.get(seccion), dict)
+        datos[s] for s in _RUTAS_ANIDADAS if isinstance(datos.get(s), dict)
     ]
 
     for campo, alias_list in _ALIAS.items():
@@ -102,26 +117,30 @@ def extraer_de_json(datos: dict) -> dict[str, Any]:
                 campos[campo] = _normalizar(campo, valor)
                 break
 
-    # 2. Intentar derivar edad_days desde fecha_nacimiento si no se encontró
-    if campos["age_days"] is None:
-        campos["age_days"] = _derivar_edad_desde_fecha(datos)
+    # Derivar edad desde fecha de nacimiento si no se encontró
+    if campos["edad"] is None:
+        campos["edad"] = _derivar_edad_desde_fecha(datos)
 
-    # 3. Listar campos faltantes **solo para los requeridos**
+    # Intentar calcular IMC si falta
+    if campos["imc"] is None and campos["peso"] and campos["talla"]:
+        try:
+            campos["imc"] = round(campos["peso"] / (campos["talla"] ** 2), 1)
+        except (TypeError, ZeroDivisionError):
+            pass
+
     campos["campos_faltantes"] = [
-        {"campo": k, "descripcion": CAMPOS_REQUERIDOS[k]}
-        for k in CAMPOS_REQUERIDOS
+        {"campo": k, "descripcion": CAMPOS_OBLIGATORIOS[k]}
+        for k in CAMPOS_OBLIGATORIOS
         if campos.get(k) is None
     ]
-
     return campos
 
 
 # ---------------------------------------------------------------------------
-# Helpers internos
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _buscar_alias(fuente: dict, alias_list: list[str]) -> Any:
-    """Busca el primer alias que exista en el dict y tenga valor no nulo."""
     for alias in alias_list:
         if alias in fuente and fuente[alias] is not None:
             return fuente[alias]
@@ -129,54 +148,39 @@ def _buscar_alias(fuente: dict, alias_list: list[str]) -> Any:
 
 
 def _normalizar(campo: str, valor: Any) -> Any:
-    """
-    Convierte el valor al tipo esperado por el modelo.
-    Los campos binarios aceptan bool, string o int.
-    Los nuevos campos numéricos se convierten a float.
-    """
-    # Campos binarios originales + diabetes, tratamiento_antihipertensivo
-    binarios = {"smoke", "alco", "active", "diabetes", "tratamiento_antihipertensivo"}
+    """Convierte el valor al tipo esperado por el modelo."""
+    enteros = {"edad", "sexo", "zona", "ap_hipertension", "diabetes", "tratamiento_antihipertensivo", "fuma"}
+    floats  = set(CAMPOS_OBLIGATORIOS.keys()) - enteros.union({"edad", "sexo", "zona", "ap_hipertension"})
 
-    if campo in binarios:
+    if campo in enteros:
         if isinstance(valor, bool):
             return 1 if valor else 0
         if isinstance(valor, str):
             return 1 if valor.lower() in {"true", "sí", "si", "yes", "1", "activo"} else 0
-        return int(bool(valor))
-
-    if campo in {"age_days", "gender", "height", "cholesterol", "gluc"}:
         return int(valor) if valor is not None else None
 
-    if campo in {"weight", "colesterol_total_mgdl", "hdl_mgdl"}:
+    if campo in floats:
         return float(valor) if valor is not None else None
-
-    if campo in {"ap_hi", "ap_lo"}:
-        return int(valor) if valor is not None else None
 
     return valor
 
 
-def _derivar_edad_desde_fecha(datos: dict) -> int | None:
-    """
-    Intenta calcular age_days desde fecha_nacimiento si está presente
-    en el JSON (formato ISO: YYYY-MM-DD).
-    """
-    from datetime import date
-
-    claves_fecha = ["fecha_nacimiento", "birth_date", "date_of_birth", "dob"]
+def _derivar_edad_desde_fecha(datos: dict) -> Optional[int]:
+    """Calcula edad en años desde fecha de nacimiento ISO."""
+    claves = ["fecha_nacimiento", "birth_date", "date_of_birth", "dob"]
     fuentes = [datos] + [
-        datos[s] for s in _RUTAS_ANIDADAS
-        if isinstance(datos.get(s), dict)
+        datos[s] for s in _RUTAS_ANIDADAS if isinstance(datos.get(s), dict)
     ]
-
     for fuente in fuentes:
-        for clave in claves_fecha:
+        for clave in claves:
             if clave in fuente and fuente[clave]:
                 try:
-                    nacimiento = date.fromisoformat(str(fuente[clave]))
-                    dias = (date.today() - nacimiento).days
-                    if 6000 <= dias <= 40000:  # rango razonable 16-110 años
-                        return dias
+                    nac = date.fromisoformat(str(fuente[clave]))
+                    edad = date.today().year - nac.year
+                    if (date.today().month, date.today().day) < (nac.month, nac.day):
+                        edad -= 1
+                    if 18 <= edad <= 110:
+                        return edad
                 except (ValueError, TypeError):
                     continue
     return None

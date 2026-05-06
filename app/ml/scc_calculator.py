@@ -29,7 +29,7 @@ FACTOR_AJUSTE_COLOMBIA = 0.75
 
 def calcular_scc(
     edad: int,
-    sexo: int,
+    sexo: int,                       # 0 = mujer, 1 = hombre (nuevo convenio)
     colesterol_total: float,
     hdl: float,
     presion_sistolica: int,
@@ -88,9 +88,7 @@ def calcular_scc(
 
 
 def _clasificar(porcentaje: float) -> tuple[str, str]:
-    """
-    Mismos umbrales que Framingham aplicados al valor ajustado.
-    """
+    """Mismos umbrales que Framingham aplicados al valor ajustado."""
     if porcentaje < 10:
         return (
             'Bajo',

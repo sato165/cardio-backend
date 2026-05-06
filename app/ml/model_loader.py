@@ -2,40 +2,40 @@ import joblib
 from pathlib import Path
 from app.core.config import settings
 
-# El modelo se carga una sola vez cuando el servidor arranca.
-# Todas las peticiones comparten esta misma instancia en memoria.
-_model = None
+# Singleton que contendrá los tres artefactos
+_artifacts = None
 
 
-def get_model():
-    """Retorna el modelo activo. Lo carga la primera vez que se llama."""
-    global _model
-    if _model is None:
-        _model = _load_model()
-    return _model
+def get_artifacts():
+    """
+    Retorna un diccionario con el modelo, el scaler y el PCA.
+    La primera vez los carga desde disco; luego usa la copia en memoria.
+    """
+    global _artifacts
+    if _artifacts is None:
+        _artifacts = _load_artifacts()
+    return _artifacts
 
 
-def _load_model():
-    """Selecciona y carga el .pkl según BEST_MODEL en .env."""
-    rutas = {
-        "random_forest": settings.model_rf_path,
-        "xgboost":       settings.model_xgb_path,
+def _load_artifacts():
+    paths = {
+        "model": Path(settings.MODEL_PATH),
+        "scaler": Path(settings.SCALER_PATH),
+        "pca": Path(settings.PCA_PATH),
     }
 
-    nombre = settings.best_model.lower()
-    if nombre not in rutas:
-        raise ValueError(
-            f"BEST_MODEL='{nombre}' no es válido. "
-            f"Opciones: {list(rutas.keys())}"
-        )
+    for name, path in paths.items():
+        if not path.exists():
+            raise FileNotFoundError(
+                f"No se encontró el artefacto '{name}' en '{path}'. "
+                "Verifica que los archivos .pkl estén en la carpeta models/."
+            )
 
-    ruta = Path(rutas[nombre])
-    if not ruta.exists():
-        raise FileNotFoundError(
-            f"No se encontró el modelo en '{ruta}'. "
-            f"Asegúrate de copiar los .pkl a la carpeta models/."
-        )
+    artifacts = {
+        "model": joblib.load(paths["model"]),
+        "scaler": joblib.load(paths["scaler"]),
+        "pca": joblib.load(paths["pca"]),
+    }
 
-    model = joblib.load(ruta)
-    print(f"✓ Modelo cargado: {nombre} ({ruta})")
-    return model
+    print("✓ Artefactos cargados: RandomForest, StandardScaler, PCA")
+    return artifacts

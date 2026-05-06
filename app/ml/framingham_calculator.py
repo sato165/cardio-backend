@@ -12,7 +12,7 @@ arterial periférica) en los próximos 10 años.
 
 Variables requeridas:
   - edad (años): 30–74
-  - sexo: 'M' (hombre) o 'F' (mujer)
+  - sexo: 0 = mujer, 1 = hombre (nuevo convenio)
   - colesterol_total (mg/dL)
   - hdl (mg/dL)
   - presion_sistolica (mmHg)
@@ -58,7 +58,7 @@ _COEF_M = {
 
 def calcular_framingham(
     edad: int,
-    sexo: int,                        # 1 = mujer, 2 = hombre (mismo código que el dataset)
+    sexo: int,                        # 0 = mujer, 1 = hombre (nuevo convenio)
     colesterol_total: float,          # mg/dL
     hdl: float,                       # mg/dL
     presion_sistolica: int,           # mmHg
@@ -81,7 +81,9 @@ def calcular_framingham(
             f"30 y 74 años. La edad del paciente es {edad} años."
         )
 
-    coef = _COEF_H if sexo == 2 else _COEF_M
+    # Mapear sexo a 'M'/'F' interno: 0 → mujer, 1 → hombre
+    es_hombre = (sexo == 1)
+    coef = _COEF_H if es_hombre else _COEF_M
 
     ln_sbp = math.log(presion_sistolica)
     coef_sbp = coef['ln_sbp_tx'] if tratamiento_antihipertensivo else coef['ln_sbp_no']
@@ -145,12 +147,12 @@ def _resultado_no_aplicable(razon: str) -> dict:
 
 
 # ── Campos requeridos para mostrar en el frontend ────────────────────────────
-
+# Ahora hdl ya es obligatorio en el formulario principal; no se pide aquí.
 CAMPOS_REQUERIDOS_FRAMINGHAM = {
-    'colesterol_total_mgdl': 'Colesterol total (mg/dL)',
-    'hdl_mgdl':              'Colesterol HDL (mg/dL)',
-    'diabetes':              'Diabetes mellitus (sí / no)',
-    'tratamiento_hta':       'Tratamiento antihipertensivo actual (sí / no)',
+    'colesterol_total_mgdl':      'Colesterol total (mg/dL)',
+    'diabetes':                   'Diabetes mellitus (sí / no)',
+    'tratamiento_antihipertensivo': 'Tratamiento antihipertensivo actual (sí / no)',
+    'fuma':                       'Fumador actual (sí / no)',
 }
 
 

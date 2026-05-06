@@ -1,83 +1,82 @@
 import pandas as pd
-from app.schemas.input_schema import CardiovascularInput
+from app.schemas.input_schema import PredictionInput  # nuevo schema
 
-# Orden exacto de features con el que fue entrenado el modelo.
-# Si se cambia aquí, debe cambiarse también en el notebook de entrenamiento.
+# Orden exacto de las 22 columnas con el que se entrenó el modelo real
 FEATURE_ORDER = [
-    "age", "gender", "height", "weight",
-    "ap_hi", "ap_lo", "cholesterol", "gluc",
-    "smoke", "alco", "active",
-    "bmi", "age_range", "bp_category",
-    "pulse_pressure", "metabolic_risk",
+    "creatinina", "celulas_medias", "glucosa", "granulocitos",
+    "hdl", "hematocrito", "hemoglobina", "ldl", "leucocitos",
+    "linfocitos", "plaquetas", "trigliceridos", "edad", "sexo",
+    "zona", "ap_hipertension", "ta_sistolica", "ta_diastolica",
+    "peso", "talla", "imc", "TFG"
 ]
 
+# Límites de winsorización (clipping) definidos en el notebook real
+LIMITES = {
+    "creatinina": (0, 2.0),
+    "celulas_medias": (0, 20.0),
+    "glucosa": (25.0, 492.0),
+    "hdl": (0, 120.0),
+    "hematocrito": (14.0, 63.0),
+    "hemoglobina": (7.0, 21.0),
+    "ldl": (0, 404.6),
+    "trigliceridos": (0, 420.0),
+    "edad": (6, 110),
+    "ta_sistolica": (60.5, 220.0),
+    "ta_diastolica": (40.0, 120.0),
+    "peso": (9.0, 170.0),
+    "talla": (1.27, 1.97),
+    "imc": (4.51, 60.0),
+    "TFG": (11.47, 197.39),
+    # variables sin límite documentado: se dejan sin clip
+}
 
-def preparar_features(datos: CardiovascularInput) -> pd.DataFrame:
-    """
-    Recibe los datos validados del schema de entrada y retorna un
-    DataFrame con exactamente las mismas columnas y orden que usó
-    el modelo durante el entrenamiento.
-    """
-    age_years = datos.age_days / 365.25
-    bmi       = datos.weight / (datos.height / 100) ** 2
 
+def _aplicar_clipping(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aplica winsorización por límites clínicos a las columnas definidas.
+    Modifica el DataFrame in-place.
+    """
+    for col, (lim_inf, lim_sup) in LIMITES.items():
+        if col in df.columns:
+            df[col] = df[col].clip(lower=lim_inf, upper=lim_sup)
+    return df
+
+
+def preparar_features(datos: PredictionInput) -> pd.DataFrame:
+    """
+    Recibe los datos validados del nuevo schema de entrada y retorna un
+    DataFrame con las 22 columnas en el orden exacto que espera el modelo.
+    """
+    # Construir diccionario con todas las claves
     fila = {
-        "age":            round(age_years, 1),
-        "gender":         datos.gender,
-        "height":         datos.height,
-        "weight":         datos.weight,
-        "ap_hi":          datos.ap_hi,
-        "ap_lo":          datos.ap_lo,
-        "cholesterol":    datos.cholesterol,
-        "gluc":           datos.gluc,
-        "smoke":          datos.smoke,
-        "alco":           datos.alco,
-        "active":         datos.active,
-        "bmi":            round(bmi, 1),
-        "age_range":      _calcular_age_range(age_years),
-        "bp_category":    _calcular_bp_category(datos.ap_hi, datos.ap_lo),
-        "pulse_pressure": datos.ap_hi - datos.ap_lo,
-        "metabolic_risk": _calcular_metabolic_risk(datos.cholesterol, datos.gluc, bmi),
+        "creatinina": datos.creatinina,
+        "celulas_medias": datos.celulas_medias,
+        "glucosa": datos.glucosa,
+        "granulocitos": datos.granulocitos,
+        "hdl": datos.hdl,
+        "hematocrito": datos.hematocrito,
+        "hemoglobina": datos.hemoglobina,
+        "ldl": datos.ldl,
+        "leucocitos": datos.leucocitos,
+        "linfocitos": datos.linfocitos,
+        "plaquetas": datos.plaquetas,
+        "trigliceridos": datos.trigliceridos,
+        "edad": datos.edad,
+        "sexo": datos.sexo,
+        "zona": datos.zona,
+        "ap_hipertension": datos.ap_hipertension,
+        "ta_sistolica": datos.ta_sistolica,
+        "ta_diastolica": datos.ta_diastolica,
+        "peso": datos.peso,
+        "talla": datos.talla,
+        "imc": datos.imc,
+        "TFG": datos.TFG,
     }
 
-    return pd.DataFrame([fila])[FEATURE_ORDER]
+    # Crear DataFrame y asegurar el orden correcto
+    df = pd.DataFrame([fila])[FEATURE_ORDER]
 
+    # Aplicar clipping
+    df = _aplicar_clipping(df)
 
-def _calcular_age_range(age_years: float) -> int:
-    """
-    Categoría ordinal de edad (misma lógica que 03_feature_engineering.ipynb).
-    1 = menor de 40 · 2 = 40-49 · 3 = 50-59 · 4 = 60 o más
-    """
-    if age_years < 40:
-        return 1
-    elif age_years < 50:
-        return 2
-    elif age_years < 60:
-        return 3
-    return 4
-
-
-def _calcular_bp_category(ap_hi: int, ap_lo: int) -> int:
-    """
-    Clasificación AHA de presión arterial (misma lógica que 03_feature_engineering.ipynb).
-    1 = Normal · 2 = Elevada · 3 = HTA grado 1 · 4 = HTA grado 2
-    """
-    if ap_hi < 120 and ap_lo < 80:
-        return 1
-    elif ap_hi < 130 and ap_lo < 80:
-        return 2
-    elif ap_hi < 140 or ap_lo < 90:
-        return 3
-    return 4
-
-
-def _calcular_metabolic_risk(colesterol: int, gluc: int, bmi: float) -> int:
-    """
-    Score de riesgo metabólico sumado de 0 a 3
-    (misma lógica que 03_feature_engineering.ipynb).
-    """
-    return (
-        int(colesterol > 1) +
-        int(gluc > 1) +
-        int(bmi >= 30)
-    )
+    return df

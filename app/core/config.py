@@ -2,9 +2,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    best_model: str = "xgboost_model"
-    model_rf_path: str = "models/random_forest.pkl"
-    model_xgb_path: str = "models/xgboost_model.pkl"
+    # Nuevas rutas para los artefactos del pipeline real (Colombia)
+    MODEL_PATH: str = "models/random_forest.pkl"
+    SCALER_PATH: str = "models/scaler.pkl"
+    PCA_PATH: str = "models/pca.pkl"
+
     debug: bool = True
     allowed_origins: str = "http://localhost:5173"
     max_upload_size_mb: int = 5
