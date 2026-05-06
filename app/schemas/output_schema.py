@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 
 class ClusterProb(BaseModel):
@@ -71,3 +71,23 @@ class UploadOutput(BaseModel):
     mensaje:          str = ""
     datos_paciente:   Optional[DatosPaciente] = None
     framingham_faltante: Optional[List[CampoFaltante]] = None
+
+
+# ──────────────────────────────────────────────────────────
+# NUEVOS ESQUEMAS PARA EXPLICABILIDAD (SHAP)
+# ──────────────────────────────────────────────────────────
+
+class FeatureSHAP(BaseModel):
+    feature: str = Field(..., description="Nombre de la variable clínica")
+    shap_value: float = Field(..., description="Valor SHAP para una clase determinada (contribución en unidades originales)")
+
+
+class ExplainabilityOutput(BaseModel):
+    predicted_cluster: int = Field(..., description="Cluster predicho (0,1,2)")
+    cluster_name: str = Field(..., description="Nombre del perfil clínico")
+    shap_values: Dict[str, List[FeatureSHAP]] = Field(
+        ..., description="Mapa de nombre de cluster -> lista de contribuciones SHAP por feature"
+    )
+    base_values: Dict[str, float] = Field(
+        ..., description="Valor base (expected value) del modelo para cada cluster"
+    )

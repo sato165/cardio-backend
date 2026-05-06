@@ -1,7 +1,6 @@
 from pydantic import ValidationError
 from app.ml.preprocessing import preparar_features
 from app.ml.predictor     import predecir
-# from app.ml.explainer import explicar_shap   # ya no se usa, se puede eliminar después
 from app.schemas.input_schema  import PredictionInput
 from app.schemas.output_schema import (
     PredictionOutput, ClusterProb,
@@ -12,15 +11,34 @@ from app.ml.framingham_calculator import calcular_framingham, campos_faltantes_f
 from app.ml.scc_calculator import calcular_scc
 
 
+RANGOS_VALIDACION = {
+    "creatinina": (0, 2.0),
+    "celulas_medias": (0, 20.0),
+    "glucosa": (25.0, 492.0),
+    "granulocitos": (0, 100),
+    "hdl": (0, 120.0),
+    "hematocrito": (14.0, 63.0),
+    "hemoglobina": (7.0, 21.0),
+    "ldl": (0, 404.6),
+    "leucocitos": (0, None),
+    "linfocitos": (0, 100),
+    "plaquetas": (0, None),
+    "trigliceridos": (0, 420.0),
+    "edad": (6, 110),
+    "ta_sistolica": (60.5, 220.0),
+    "ta_diastolica": (40.0, 120.0),
+    "peso": (9.0, 170.0),
+    "talla": (1.27, 1.97),
+    "imc": (4.51, 60.0),
+    "TFG": (11.47, 197.39),
+}
+
+
 def predecir_desde_formulario(datos: PredictionInput) -> PredictionOutput:
-    """Flujo del endpoint POST /api/predict (nuevo modelo de clusters)."""
     features  = preparar_features(datos)
-    resultado = predecir(features)  # dict con cluster predicho y probabilidades
+    resultado = predecir(features)
 
-    # Construir lista de probabilidades
     probabilidades = [ClusterProb(**p) for p in resultado["probabilities"]]
-
-    # Intentar cálculo comparativo con Framingham/SCC si hay datos
     riesgo_comparativo = _calcular_comparativo(datos)
 
     return PredictionOutput(
@@ -33,9 +51,6 @@ def predecir_desde_formulario(datos: PredictionInput) -> PredictionOutput:
 
 
 def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
-    """Intenta calcular Framingham y SCC con los campos opcionales presentes."""
-    # Framingham requiere: colesterol_total, diabetes, tratamiento_antihipertensivo, fuma
-    # Además usa edad, sexo, hdl, ta_sistolica (ya obligatorios)
     datos_fram = {
         "colesterol_total_mgdl": datos.colesterol_total_mgdl,
         "diabetes": datos.diabetes,
@@ -49,10 +64,9 @@ def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
             campos_faltantes_framingham=faltantes,
         )
 
-    # Todos los datos opcionales presentes; calcular
     fram = calcular_framingham(
         edad=datos.edad,
-        sexo=datos.sexo,  # 0 mujer, 1 hombre
+        sexo=datos.sexo,
         colesterol_total=datos.colesterol_total_mgdl,
         hdl=datos.hdl,
         presion_sistolica=datos.ta_sistolica,
@@ -62,10 +76,7 @@ def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
     )
 
     if not fram["aplicable"]:
-        return RiesgoComparativo(
-            datos_suficientes=False,
-            # podrías agregar un mensaje extra si quieres
-        )
+        return RiesgoComparativo(datos_suficientes=False)
 
     scc = calcular_scc(
         edad=datos.edad,
@@ -88,12 +99,7 @@ def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
 
 
 def predecir_desde_extraccion(campos: dict) -> UploadOutput:
-    """
-    Flujo para carga de JSON/PDF.
-    Espera un dict con las 22 claves del nuevo modelo + opcionales.
-    """
     faltantes = []
-    # Comprobar los 22 campos obligatorios
     obligatorios = [
         "creatinina", "celulas_medias", "glucosa", "granulocitos",
         "hdl", "hematocrito", "hemoglobina", "ldl", "leucocitos",
@@ -108,7 +114,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
                 "descripcion": f"Campo obligatorio '{campo}' faltante"
             })
 
-    # Construir DatosPaciente con lo que haya
     datos_paciente = DatosPaciente(
         creatinina=campos.get("creatinina"),
         celulas_medias=campos.get("celulas_medias"),
@@ -146,7 +151,6 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             mensaje=f"Faltan {len(faltantes)} campo(s) obligatorio(s).",
         )
 
-    # Intentar construir PredictionInput
     try:
         input_datos = PredictionInput(
             creatinina=campos["creatinina"],
@@ -180,10 +184,20 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
         campos_invalidos = []
         for error in e.errors():
             campo = str(error["loc"][-1])
-            campos_invalidos.append(CampoFaltante(
-                campo=campo,
-                descripcion=f"Valor inválido ({error.get('input')}): {error['msg']}",
-            ))
+            if campo in RANGOS_VALIDACION:
+                mini, maxi = RANGOS_VALIDACION[campo]
+                if mini is not None and maxi is not None:
+                    rango_str = f"{mini} – {maxi}"
+                elif mini is not None:
+                    rango_str = f"≥ {mini}"
+                elif maxi is not None:
+                    rango_str = f"≤ {maxi}"
+                else:
+                    rango_str = ""
+                desc = f"Valor fuera de rango ({error.get('input')}). Rango aceptable: {rango_str}."
+            else:
+                desc = f"Valor inválido ({error.get('input')}): {error['msg']}"
+            campos_invalidos.append(CampoFaltante(campo=campo, descripcion=desc))
         return UploadOutput(
             campos_faltantes=campos_invalidos,
             prediccion=None,
