@@ -1,6 +1,6 @@
 # CardioPredict API
 
-Backend del sistema de predicción de riesgo cardiovascular con explicabilidad clínica para médicos.
+Backend del sistema de predicción de riesgo cardiovascular con perfilamiento clínico mediante clustering e inteligencia artificial para médicos.
 
 Desarrollado por Sebastián Torres Ortega, Mayerlis Acosta Peralta y Christian Rivera Dibasto como proyecto integrador de Ingeniería de Sistemas e Ingeniería Biomédica.
 
@@ -8,7 +8,7 @@ Desarrollado por Sebastián Torres Ortega, Mayerlis Acosta Peralta y Christian R
 
 ## ¿Qué hace este sistema?
 
-Recibe datos de un paciente (manualmente o desde una historia clínica en JSON o PDF), predice el riesgo de enfermedad cardiovascular usando un modelo XGBoost entrenado sobre 68 515 registros, y retorna la predicción junto con una explicación en lenguaje clínico que indica qué factores aumentaron o redujeron el riesgo y en qué proporción.
+Recibe datos de un paciente (manualmente o desde una historia clínica en JSON o PDF), los procesa mediante un pipeline de clustering (winsorización → StandardScaler → PCA de 11 componentes → Random Forest), asigna al paciente a uno de tres perfiles clínicos — **Cardio‑renal**, **Cardiovascular Inflamatorio** o **Bajo Riesgo** — y retorna las probabilidades de pertenencia a cada perfil junto con una explicación clínica. Opcionalmente calcula los índices de riesgo **Framingham 2008** y el ajuste de la **Sociedad Colombiana de Cardiología (SCC)** si se proporcionan datos adicionales.
 
 ---
 
@@ -17,11 +17,11 @@ Recibe datos de un paciente (manualmente o desde una historia clínica en JSON o
 | Capa | Tecnología |
 |---|---|
 | Framework web | FastAPI + Uvicorn |
-| Modelo principal | XGBoost (AUC-ROC 0.799) |
-| Modelo alternativo | Random Forest (AUC-ROC 0.798) |
-| Explicabilidad | SHAP + LIME |
+| Modelo principal | Random Forest con clustering PCA |
+| Explicabilidad | SHAP TreeExplainer |
 | Validación de datos | Pydantic v2 |
 | Extracción PDF | PyMuPDF · pdfplumber · pytesseract |
+| Empaquetado escritorio | PyInstaller 6.x |
 | Pruebas | pytest + httpx |
 | Entrenamiento | Google Colab (notebooks en `notebooks/`) |
 
@@ -31,53 +31,46 @@ Recibe datos de un paciente (manualmente o desde una historia clínica en JSON o
 
 ```
 cardio-backend/
-│
 ├── app/
 │   ├── api/
-│   │   ├── router.py              # Registra todos los routers
+│   │   ├── router.py
 │   │   └── routes/
-│   │       ├── predict.py         # POST /api/predict
-│   │       └── upload.py          # POST /api/predict/upload y /upload/pdf
-│   │
+│   │       ├── explain.py
+│   │       ├── predict.py
+│   │       └── upload.py
 │   ├── core/
-│   │   └── config.py              # Configuración desde .env
-│   │
+│   │   └── config.py
 │   ├── ml/
-│   │   ├── model_loader.py        # Carga el .pkl una sola vez al arrancar
-│   │   ├── preprocessing.py       # Limpieza y feature engineering por predicción
-│   │   ├── predictor.py           # Inferencia del modelo
-│   │   └── explainer.py           # SHAP y LIME → texto clínico legible
-│   │
+│   │   ├── explainability.py
+│   │   ├── framingham_calculator.py
+│   │   ├── model_loader.py
+│   │   ├── predictor.py
+│   │   ├── preprocessing.py
+│   │   └── scc_calculator.py
 │   ├── schemas/
-│   │   ├── input_schema.py        # Validación de entrada con Pydantic
-│   │   └── output_schema.py       # Estructura de la respuesta
-│   │
+│   │   ├── input_schema.py
+│   │   └── output_schema.py
 │   └── services/
-│       ├── prediction_service.py  # Orquesta el flujo completo
-│       ├── json_extractor.py      # Extrae campos de historia clínica JSON
-│       └── pdf_extractor.py       # Extrae campos de historia clínica PDF
-│
+│       ├── json_extractor.py
+│       ├── pdf_extractor.py
+│       └── prediction_service.py
 ├── data/
-│   ├── raw/cardio_train.csv       # Dataset original (70 000 registros)
-│   └── processed/
-│       ├── cardio_clean.csv       # Tras limpieza (68 515 registros)
-│       └── cardio_features.csv    # Con features derivados (17 columnas)
-│
+│   ├── content/
+│   ├── processed/
+│   └── raw/
+├── dist/
+│   └── CardioPredictor.exe        ← ejecutable de escritorio generado
+├── frontend_dist/                 ← build del frontend (copiado desde cardio-frontend/dist/)
 ├── models/
+│   ├── kmeans.pkl
+│   ├── pca.pkl
 │   ├── random_forest.pkl
-│   └── xgboost_model.pkl          # Modelo activo por defecto
-│
-├── notebooks/                     # Ejecutar en Google Colab
-│   ├── 01_eda.ipynb
-│   ├── 02_preprocessing.ipynb
-│   ├── 03_feature_engineering.ipynb
-│   └── 04_model_training.ipynb
-│
+│   ├── scaler.pkl
+│   └── xgboost_model.pkl
+├── notebooks/
 ├── tests/
-│   ├── test_predict.py
-│   ├── test_preprocessing.py
-│   └── test_upload.py
-│
+├── cardio_app.py                  ← punto de entrada para el ejecutable
+├── hook-numpy.py                  ← hook personalizado de PyInstaller para numpy
 ├── main.py
 ├── requirements.txt
 ├── .env.example
@@ -86,7 +79,7 @@ cardio-backend/
 
 ---
 
-## Instalación
+## Instalación (modo desarrollo)
 
 ### Requisitos previos
 
@@ -111,17 +104,16 @@ pip install -r requirements.txt
 # 4. Configurar variables de entorno
 copy .env.example .env       # Windows
 cp .env.example .env         # Linux / macOS
-# Editar .env con las rutas y configuración deseada
 
-# 5. Verificar que los modelos estén en models/
-# models/random_forest.pkl
-# models/xgboost_model.pkl
+# 5. Verificar que los artefactos estén en models/
+# models/random_forest.pkl · models/scaler.pkl · models/pca.pkl
+# models/kmeans.pkl · models/xgboost_model.pkl
 
 # 6. Arrancar el servidor
 uvicorn main:app --reload
 ```
 
-El servidor queda disponible en `http://localhost:8000`.
+El servidor queda disponible en `http://localhost:8000`.  
 La documentación interactiva Swagger está en `http://localhost:8000/docs`.
 
 ---
@@ -131,9 +123,9 @@ La documentación interactiva Swagger está en `http://localhost:8000/docs`.
 Copiar `.env.example` como `.env` y completar:
 
 ```env
-BEST_MODEL=xgboost              # 'xgboost' o 'random_forest'
-MODEL_RF_PATH=models/random_forest.pkl
-MODEL_XGB_PATH=models/xgboost_model.pkl
+MODEL_PATH=models/random_forest.pkl
+SCALER_PATH=models/scaler.pkl
+PCA_PATH=models/pca.pkl
 DEBUG=True
 ALLOWED_ORIGINS=http://localhost:5173
 MAX_UPLOAD_SIZE_MB=5
@@ -143,106 +135,21 @@ MAX_UPLOAD_SIZE_MB=5
 
 ## Endpoints
 
-### `POST /api/predict/`
-Predicción desde formulario manual.
+### `POST /api/predict`
+Predicción desde formulario manual con 22 variables clínicas.
 
-**Body:**
-```json
-{
-  "age_days": 21061,
-  "gender": 2,
-  "height": 172,
-  "weight": 88.5,
-  "ap_hi": 145,
-  "ap_lo": 90,
-  "cholesterol": 2,
-  "gluc": 2,
-  "smoke": 0,
-  "alco": 0,
-  "active": 1
-}
-```
-
-**Respuesta:**
-```json
-{
-  "riesgo_cardiovascular": 1,
-  "probabilidad": 0.8178,
-  "nivel_riesgo": "Alto",
-  "explicabilidad": [
-    {
-      "factor": "Presión sistólica",
-      "impacto": 1.0557,
-      "descripcion": "Su presión sistólica de 145 mmHg aumenta el riesgo en un 105.6%.",
-      "nivel": "crítico",
-      "advertencia": null
-    }
-  ]
-}
-```
-
----
-
-### `POST /api/predict/upload`
+### `POST /api/upload`
 Predicción desde historia clínica en JSON. Detecta campos faltantes automáticamente.
 
-**Form data:** archivo `.json`
-
----
-
-### `POST /api/predict/upload/pdf`
-Predicción desde historia clínica en PDF. Acepta hasta 5 PDFs del mismo paciente y fusiona los campos encontrados en cada uno.
-
-Detecta automáticamente el tipo de PDF:
-- **Texto nativo** → PyMuPDF
-- **Con tablas** → pdfplumber
-- **Escaneado** → pytesseract (requiere Tesseract instalado en el sistema)
-
-**Form data:** uno o más archivos `.pdf`
-
----
+### `POST /api/predict/explain`
+Retorna las probabilidades por perfil clínico para la explicabilidad.
 
 ### `GET /api/health`
-Verifica que el servidor y el modelo estén cargados.
+Verifica que el servidor y los artefactos estén cargados.
 
 ```json
-{"status": "ok", "model_activo": "xgboost"}
+{ "status": "ok", "modelo": "RandomForest con clustering PCA" }
 ```
-
----
-
-## Campos del modelo
-
-| Campo | Tipo | Descripción | Rango válido |
-|---|---|---|---|
-| `age_days` | int | Edad en días | 10 000 – 40 000 |
-| `gender` | int | 1 = mujer · 2 = hombre | 1 – 2 |
-| `height` | int | Altura en cm | 140 – 220 |
-| `weight` | float | Peso en kg | 30 – 180 |
-| `ap_hi` | int | Presión sistólica (mmHg) | 60 – 250 |
-| `ap_lo` | int | Presión diastólica (mmHg) | 40 – 200 |
-| `cholesterol` | int | 1 normal · 2 alto · 3 muy alto | 1 – 3 |
-| `gluc` | int | 1 normal · 2 alto · 3 muy alto | 1 – 3 |
-| `smoke` | int | 0 no fuma · 1 fuma | 0 – 1 |
-| `alco` | int | 0 no consume · 1 consume alcohol | 0 – 1 |
-| `active` | int | 0 sedentario · 1 activo | 0 – 1 |
-
-**Nota clínica:** las variables `smoke` y `alco` presentan sesgo de subregistro en el dataset de entrenamiento (8.8% y 5.4% de positivos autorreportados respectivamente). Su impacto en la explicabilidad puede subestimar el riesgo real del tabaquismo y el consumo de alcohol. Esto se documenta en la respuesta con el campo `advertencia` de cada factor.
-
----
-
-## Modelo y rendimiento
-
-Los modelos fueron entrenados sobre el dataset [Cardiovascular Disease](https://www.kaggle.com/code/abdelrahmanabdelalem/cardiovascular-disease-83-accuracy/notebook) con 68 515 registros tras limpieza.
-
-| Modelo | Accuracy | F1 | AUC-ROC |
-|---|---|---|---|
-| Random Forest (tuned) | 0.731 | 0.715 | 0.798 |
-| **XGBoost (tuned)** | **0.733** | **0.719** | **0.799** |
-
-Hiperparámetros seleccionados con GridSearchCV y validación cruzada estratificada de 5 folds. Ver `notebooks/04_model_training.ipynb` para detalles.
-
-Features usados: `age`, `gender`, `height`, `weight`, `ap_hi`, `ap_lo`, `cholesterol`, `gluc`, `smoke`, `alco`, `active`, `bmi`, `age_range`, `bp_category`, `pulse_pressure`, `metabolic_risk`.
 
 ---
 
@@ -252,27 +159,104 @@ Features usados: `age`, `gender`, `height`, `weight`, `ap_hi`, `ap_lo`, `cholest
 pytest tests/ -v
 ```
 
-66 pruebas que cubren preprocesamiento, endpoints de predicción, carga de JSON y PDF, validaciones de entrada y manejo de errores.
+---
+
+## Despliegue como aplicación de escritorio (Windows)
+
+El sistema puede empaquetarse como un único ejecutable `.exe` que levanta el servidor FastAPI y abre el frontend automáticamente en el navegador. No requiere Python instalado en la máquina del usuario.
+
+### Cómo funciona
+
+`cardio_app.py` es el punto de entrada del ejecutable. Arranca Uvicorn en un hilo separado, espera 2 segundos y abre `http://127.0.0.1:8000` en el navegador por defecto. El frontend React (compilado) se sirve como archivos estáticos desde `frontend_dist/` mediante `FastAPI.mount`. Las rutas de los artefactos `.pkl` se resuelven automáticamente usando `sys._MEIPASS` dentro del ejecutable.
+
+### Preparar el frontend antes del build
+
+El build del frontend debe copiarse a `frontend_dist/` antes de empaquetar:
+
+```bash
+# Desde la raíz del proyecto (cardio-backend/)
+xcopy ..\cardio-frontend\dist frontend_dist /E /I /Y
+```
+
+### Parche requerido en scipy
+
+PyInstaller 6.x con scipy 1.11.x presenta un bug conocido (`NameError: name 'obj' is not defined`) en `scipy/stats/_distn_infrastructure.py`. Antes de cualquier build, aplicar este parche en el archivo del venv:
+
+Localizar el archivo:
+```bash
+python -c "import scipy.stats._distn_infrastructure as m; print(m.__file__)"
+```
+
+Buscar las líneas:
+```python
+for obj in [s for s in dir() if s.startswith('_doc_')]:
+    exec('del ' + obj)
+del obj
+```
+
+Reemplazarlas por:
+```python
+for obj in [s for s in dir() if s.startswith('_doc_')]:
+    exec('del ' + obj)
+try:
+    del obj
+except NameError:
+    pass
+```
+
+> **Nota:** este parche se aplica dentro del venv y no afecta scipy globalmente. Si se recrea el venv o se reinstala scipy, debe reaplicarse.
+
+### Comando de build
+
+Desde el directorio `cardio-backend/` con el venv activado:
+
+```bash
+rmdir /s /q build dist & del CardioPredictor.spec & pyinstaller --onefile --name CardioPredictor --add-data "models;models" --add-data "frontend_dist;frontend_dist" --hidden-import main --hidden-import numpy._core --hidden-import numpy._core._multiarray_umath --hidden-import numpy._core.multiarray --hidden-import joblib.externals.loky.backend.managers --collect-all numpy --collect-all scipy --collect-all joblib --collect-all shap --collect-all sklearn --copy-metadata numpy --copy-metadata scipy --copy-metadata joblib --copy-metadata scikit-learn --additional-hooks-dir . cardio_app.py
+```
+
+El ejecutable queda en `dist/CardioPredictor.exe`.
+
+### Actualizar y reconstruir
+
+**Solo cambios en el backend:**
+1. Modificar el código Python
+2. Ejecutar el comando de build
+
+**Solo cambios en el frontend:**
+1. `npm run build` en `cardio-frontend/`
+2. `xcopy ..\cardio-frontend\dist frontend_dist /E /I /Y`
+3. Ejecutar el comando de build
+
+**Cambios en ambos:** completar los pasos del frontend primero, luego ejecutar el build una sola vez.
+
+### Versiones del entorno de build
+
+| Herramienta | Versión |
+|---|---|
+| Python | 3.12 |
+| PyInstaller | 6.20.0 |
+| numpy | 1.26.4 |
+| scipy | 1.11.4 |
+| joblib | 1.4.2 |
 
 ---
 
-## Agregar un nuevo modelo
+## Cómo extender el sistema
 
-1. Crear archivo en `app/ml/` con la lógica de inferencia
+**Agregar un nuevo modelo:**
+1. Crear archivo en `app/ml/`
 2. Agregar la ruta en `config.py` y `.env.example`
-3. Actualizar `model_loader.py` para cargarlo según el nombre en `BEST_MODEL`
-4. No tocar rutas ni servicios
+3. Actualizar `model_loader.py`
 
-## Agregar un nuevo endpoint
-
+**Agregar un nuevo endpoint:**
 1. Crear archivo en `app/api/routes/`
 2. Registrarlo en `app/api/router.py`
 3. No tocar `main.py`
 
 ---
 
-## Notas de despliegue
+## Notas
 
-- **Vercel**: no soporta Tesseract OCR. Los PDFs de texto y tablas funcionan sin él. Para soporte completo de PDFs escaneados usar Railway o Render donde se puede instalar el paquete del sistema `tesseract-ocr`.
-- Los archivos `.pkl` no se suben a Git (están en `.gitignore`). Deben copiarse manualmente a `models/` tras clonar el repositorio.
 - El archivo `.env` nunca se sube a Git. Usar `.env.example` como plantilla.
+
+- El hook `hook-numpy.py` en la raíz del proyecto es necesario para el build y no debe eliminarse.
