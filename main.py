@@ -4,7 +4,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles   # <-- añadido
 from pydantic import ValidationError
+import os                                      # <-- añadido
 
 from app.core.config import settings
 from app.api.router import router
@@ -29,13 +31,10 @@ app.include_router(router, prefix="/api")
 
 
 # ── Manejadores de errores ────────────────────────────────────────────────────
+# (Todos los tuyos se mantienen sin cambios)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    """
-    Pydantic rechazó los datos de entrada (campos fuera de rango, tipo incorrecto, etc.).
-    Retorna los errores en un formato legible en lugar del JSON técnico por defecto.
-    """
     errores = []
     for error in exc.errors():
         campo = " → ".join(str(loc) for loc in error["loc"] if loc != "body")
@@ -44,7 +43,6 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
             "mensaje": error["msg"],
             "valor":   error.get("input"),
         })
-
     return JSONResponse(
         status_code=422,
         content={
@@ -53,14 +51,8 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         },
     )
 
-
 @app.exception_handler(ValidationError)
 async def pydantic_error_handler(request: Request, exc: ValidationError):
-    """
-    ValidationError lanzado desde prediction_service al construir PredictionInput
-    con valores extraídos de un JSON o PDF que pasan el check de campos faltantes
-    pero tienen valores fuera de rango.
-    """
     errores = []
     for error in exc.errors():
         campo = " → ".join(str(loc) for loc in error["loc"])
@@ -69,7 +61,6 @@ async def pydantic_error_handler(request: Request, exc: ValidationError):
             "mensaje": error["msg"],
             "valor":   error.get("input"),
         })
-
     return JSONResponse(
         status_code=422,
         content={
@@ -82,10 +73,8 @@ async def pydantic_error_handler(request: Request, exc: ValidationError):
         },
     )
 
-
 @app.exception_handler(FileNotFoundError)
 async def model_not_found_handler(request: Request, exc: FileNotFoundError):
-    """Uno o más artefactos (modelo, scaler, pca) no se encuentran en disco."""
     return JSONResponse(
         status_code=503,
         content={
@@ -98,10 +87,8 @@ async def model_not_found_handler(request: Request, exc: FileNotFoundError):
         },
     )
 
-
 @app.exception_handler(Exception)
 async def generic_error_handler(request: Request, exc: Exception):
-    """Captura cualquier error no manejado y evita exponer stack traces al cliente."""
     return JSONResponse(
         status_code=500,
         content={
@@ -114,3 +101,9 @@ async def generic_error_handler(request: Request, exc: Exception):
 @app.get("/api/health", tags=["Health"])
 def health_check():
     return {"status": "ok", "modelo": "RandomForest con clustering PCA"}
+
+
+# ── Servir el frontend (React) ────────────────────────────────────────────────
+frontend_path = os.path.join(os.path.dirname(__file__), "frontend_dist")
+if os.path.exists(frontend_path):
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="static")
