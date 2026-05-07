@@ -35,14 +35,22 @@ def explain_prediction(datos: PredictionInput):
     shap_vals = compute_shap_values(features_array)   # (1, 22, 3)
     shap_sample = shap_vals[0]                        # (22, 3)
 
+    # Extraer los valores del paciente (primer registro)
+    paciente_vals = df_features.iloc[0].to_dict()
+
     # 3. Construir respuesta por cluster
     shap_by_cluster = {}
     for cluster_id, nombre in NOMBRES_CLUSTERS.items():
         shap_clase = shap_sample[:, cluster_id]       # (22,)
-        features_shap = [
-            FeatureSHAP(feature=FEATURE_NAMES[i], shap_value=float(round(shap_clase[i], 6)))
-            for i in range(len(FEATURE_NAMES))
-        ]
+        features_shap = []
+        for i, fname in enumerate(FEATURE_NAMES):
+            features_shap.append(
+                FeatureSHAP(
+                    feature=fname,
+                    shap_value=float(round(shap_clase[i], 6)),
+                    feature_value=round(paciente_vals.get(fname, 0.0), 4)  # valor winsorizado
+                )
+            )
         shap_by_cluster[nombre] = features_shap
 
     # 4. Valores base (expected value) del modelo
@@ -51,7 +59,6 @@ def explain_prediction(datos: PredictionInput):
     if isinstance(expected, list):
         base_values = {NOMBRES_CLUSTERS[i]: expected[i] for i in range(3)}
     else:
-        # En algunas versiones de SHAP puede venir como array (n_classes,)
         if hasattr(expected, 'ndim') and expected.ndim == 1:
             base_values = {NOMBRES_CLUSTERS[i]: expected[i] for i in range(3)}
         else:

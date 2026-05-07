@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

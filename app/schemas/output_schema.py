@@ -1,3 +1,4 @@
+# cardio-backend/app/schemas/output_schema.py
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 
@@ -80,6 +81,7 @@ class UploadOutput(BaseModel):
 class FeatureSHAP(BaseModel):
     feature: str = Field(..., description="Nombre de la variable clínica")
     shap_value: float = Field(..., description="Valor SHAP para una clase determinada (contribución en unidades originales)")
+    feature_value: Optional[float] = Field(None, description="Valor real del paciente para esta variable (winsorizado)")
 
 
 class ExplainabilityOutput(BaseModel):
