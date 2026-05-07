@@ -1,34 +1,33 @@
 # Web framework
-fastapi==0.115.6
-uvicorn==0.32.1
-python-multipart==0.0.22
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+python-multipart>=0.0.9
 
 # Validación de datos
-pydantic==2.10.3
-pydantic-settings==2.7.0
+pydantic>=2.10,<3.0
+pydantic-settings>=2.7,<3.0
 
 # Machine Learning
-scikit-learn==1.6.1
-xgboost==2.1.3
+scikit-learn>=1.5,<2.0
+xgboost>=2.0,<3.0
 
 # Explicabilidad
-shap==0.46.0
-lime==0.2.0.1
+shap>=0.42,<1.0
+lime>=0.2,<0.3
 
 # Datos
-pandas==2.2.3
-numpy==2.0.2
+pandas>=2.0,<3.0
+numpy>=1.26,<3.0
 
 # Serialización del modelo
-joblib==1.4.2
+joblib>=1.4
 
 # Variables de entorno
-python-dotenv==1.0.1
+python-dotenv>=1.0
 
-# Extracción de PDF
-pymupdf==1.24.9
-pdfplumber==0.11.4
+# Extracción de PDF (pdfplumber es suficiente y no compila Rust)
+pdfplumber>=0.11,<1.0
 
 # Pruebas
-pytest==8.3.4
-httpx==0.28.1
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0
