@@ -1,8 +1,8 @@
 # cardio-backend/app/ml/model_loader.py
-import scipy.stats.distributions          # ← nuevo
-import scipy.stats._distn_infrastructure # ← nuevo
-import sys                          # ← NUEVO
-import os                           # ← NUEVO
+import scipy.stats.distributions
+import scipy.stats._distn_infrastructure
+import sys
+import os
 import joblib
 import shap
 from pathlib import Path
@@ -14,7 +14,6 @@ from app.core.config import settings
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    # Subimos dos niveles desde model_loader.py (app/ml) hasta la raíz del proyecto
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 _artifacts = None
@@ -27,9 +26,11 @@ def get_artifacts():
 
 def _load_artifacts():
     paths = {
-        "model": BASE_DIR / settings.MODEL_PATH,   # ← ajustado
-        "scaler": BASE_DIR / settings.SCALER_PATH, # ← ajustado
-        "pca": BASE_DIR / settings.PCA_PATH,       # ← ajustado
+        "model":    BASE_DIR / settings.MODEL_PATH,
+        "scaler":   BASE_DIR / settings.SCALER_PATH,
+        "pca":      BASE_DIR / settings.PCA_PATH,
+        "imputer":  BASE_DIR / settings.IMPUTER_PATH,
+        "columnas": BASE_DIR / settings.COLUMNAS_PATH,
     }
 
     for name, path in paths.items():
@@ -39,18 +40,22 @@ def _load_artifacts():
                 "Verifica que los archivos .pkl estén en la carpeta models/."
             )
 
-    model = joblib.load(paths["model"])
-    scaler = joblib.load(paths["scaler"])
-    pca = joblib.load(paths["pca"])
+    model    = joblib.load(paths["model"])
+    scaler   = joblib.load(paths["scaler"])
+    pca      = joblib.load(paths["pca"])
+    imputer  = joblib.load(paths["imputer"])
+    columnas = joblib.load(paths["columnas"])
 
     explainer = shap.TreeExplainer(model)
 
     artifacts = {
-        "model": model,
-        "scaler": scaler,
-        "pca": pca,
+        "model":    model,
+        "scaler":   scaler,
+        "pca":      pca,
+        "imputer":  imputer,
+        "columnas": columnas,
         "explainer": explainer,
     }
 
-    print("✓ Artefactos cargados: RandomForest, StandardScaler, PCA, SHAP TreeExplainer")
+    print("✓ Artefactos cargados: RandomForest, StandardScaler, PCA (11 componentes), KNNImputer, columnas_modelo, SHAP TreeExplainer")
     return artifacts

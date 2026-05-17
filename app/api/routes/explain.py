@@ -1,68 +1,69 @@
 # cardio-backend/app/api/routes/explain.py
 from fastapi import APIRouter
 import numpy as np
-from app.schemas.input_schema import PredictionInput
+from app.schemas.input_schema  import PredictionInput
 from app.schemas.output_schema import ExplainabilityOutput, FeatureSHAP
-from app.ml.explainability import compute_shap_values
-from app.ml.preprocessing import preparar_features
-from app.ml.predictor import predecir
-from app.ml.model_loader import get_artifacts
+from app.ml.explainability     import compute_shap_values
+from app.ml.preprocessing      import preparar_features
+from app.ml.predictor          import predecir, NOMBRES_CLUSTERS
+from app.ml.model_loader       import get_artifacts
 
 router = APIRouter()
 
-NOMBRES_CLUSTERS = {
-    0: "Cardio-renal",
-    1: "Cardiovascular Inflamatorio",
-    2: "Bajo Riesgo"
-}
 
-FEATURE_NAMES = [
-    "creatinina", "celulas_medias", "glucosa", "granulocitos", "hdl",
-    "hematocrito", "hemoglobina", "ldl", "leucocitos", "linfocitos",
-    "plaquetas", "trigliceridos", "edad", "sexo", "zona",
-    "ap_hipertension", "ta_sistolica", "ta_diastolica", "peso", "talla",
-    "imc", "TFG"
-]
+@router.post(
+    "/explain",
+    response_model=ExplainabilityOutput,
+    summary="Explicabilidad SHAP — k=4 clusters",
+    description=(
+        "Devuelve los valores SHAP en unidades originales para cada variable "
+        "y cada uno de los 4 perfiles clínicos, junto con el cluster predicho."
+    ),
+)
+def explain_prediction(datos: PredictionInput) -> ExplainabilityOutput:
 
-@router.post("/explain", response_model=ExplainabilityOutput)
-def explain_prediction(datos: PredictionInput):
-    # 1. Preprocesar y obtener predicción principal
-    df_features = preparar_features(datos)           # DataFrame (1, 22) con clipping
-    resultado = predecir(df_features)                # dict con cluster y probs
+    # 1. Preprocesar (winsorización + imputación)
+    df_features = preparar_features(datos)              # DataFrame (1, n_features)
 
-    # 2. Valores SHAP en features originales (array)
-    features_array = df_features.values.astype(float) # (1, 22)
-    shap_vals = compute_shap_values(features_array)   # (1, 22, 3)
-    shap_sample = shap_vals[0]                        # (22, 3)
+    # 2. Predicción principal
+    resultado = predecir(df_features)
 
-    # Extraer los valores del paciente (primer registro)
+    # 3. SHAP en features originales
+    features_array = df_features.values.astype(float)  # (1, n_features)
+    shap_vals      = compute_shap_values(features_array)  # (1, n_features, 4)
+    shap_sample    = shap_vals[0]                       # (n_features, 4)
+
+    # Nombres de features en el orden de columnas_modelo.pkl
+    feature_names = list(df_features.columns)
     paciente_vals = df_features.iloc[0].to_dict()
 
-    # 3. Construir respuesta por cluster
-    shap_by_cluster = {}
+    # 4. Construir respuesta por cluster (4 perfiles)
+    shap_by_cluster: dict[str, list[FeatureSHAP]] = {}
     for cluster_id, nombre in NOMBRES_CLUSTERS.items():
-        shap_clase = shap_sample[:, cluster_id]       # (22,)
-        features_shap = []
-        for i, fname in enumerate(FEATURE_NAMES):
-            features_shap.append(
-                FeatureSHAP(
-                    feature=fname,
-                    shap_value=float(round(shap_clase[i], 6)),
-                    feature_value=round(paciente_vals.get(fname, 0.0), 4)  # valor winsorizado
-                )
+        shap_clase = shap_sample[:, cluster_id]         # (n_features,)
+        shap_by_cluster[nombre] = [
+            FeatureSHAP(
+                feature=fname,
+                shap_value=float(round(float(shap_clase[i]), 6)),
+                feature_value=round(float(paciente_vals.get(fname, 0.0)), 4),
             )
-        shap_by_cluster[nombre] = features_shap
+            for i, fname in enumerate(feature_names)
+        ]
 
-    # 4. Valores base (expected value) del modelo
+    # 5. Valores base (expected_value) del explainer
     explainer = get_artifacts()["explainer"]
-    expected = explainer.expected_value
-    if isinstance(expected, list):
-        base_values = {NOMBRES_CLUSTERS[i]: expected[i] for i in range(3)}
-    else:
-        if hasattr(expected, 'ndim') and expected.ndim == 1:
-            base_values = {NOMBRES_CLUSTERS[i]: expected[i] for i in range(3)}
+    expected  = explainer.expected_value
+    n_classes = len(NOMBRES_CLUSTERS)   # 4
+
+    if isinstance(expected, (list, np.ndarray)):
+        arr = np.array(expected).flatten()
+        if len(arr) == n_classes:
+            base_values = {NOMBRES_CLUSTERS[i]: float(arr[i]) for i in range(n_classes)}
         else:
-            base_values = {n: expected for n in NOMBRES_CLUSTERS.values()}
+            # Fallback: repetir el valor escalar para cada cluster
+            base_values = {nombre: float(arr[0]) for nombre in NOMBRES_CLUSTERS.values()}
+    else:
+        base_values = {nombre: float(expected) for nombre in NOMBRES_CLUSTERS.values()}
 
     return ExplainabilityOutput(
         predicted_cluster=resultado["predicted_cluster"],

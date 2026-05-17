@@ -1,41 +1,29 @@
+import numpy as np
 import pandas as pd
-from app.schemas.input_schema import PredictionInput  # nuevo schema
+from app.schemas.input_schema import PredictionInput
+from app.ml.model_loader import get_artifacts
 
-# Orden exacto de las 22 columnas con el que se entrenó el modelo real
-FEATURE_ORDER = [
-    "creatinina", "celulas_medias", "glucosa", "granulocitos",
-    "hdl", "hematocrito", "hemoglobina", "ldl", "leucocitos",
-    "linfocitos", "plaquetas", "trigliceridos", "edad", "sexo",
-    "zona", "ap_hipertension", "ta_sistolica", "ta_diastolica",
-    "peso", "talla", "imc", "TFG"
-]
-
-# Límites de winsorización (clipping) definidos en el notebook real
+# Límites de winsorización (clipping) definidos por expertos clínicos — notebook final
 LIMITES = {
-    "creatinina": (0, 2.0),
-    "celulas_medias": (0, 20.0),
-    "glucosa": (25.0, 492.0),
-    "hdl": (0, 120.0),
-    "hematocrito": (14.0, 63.0),
-    "hemoglobina": (7.0, 21.0),
-    "ldl": (0, 404.6),
-    "trigliceridos": (0, 420.0),
-    "edad": (6, 110),
-    "ta_sistolica": (60.5, 220.0),
-    "ta_diastolica": (40.0, 120.0),
-    "peso": (9.0, 170.0),
-    "talla": (1.27, 1.97),
-    "imc": (4.51, 60.0),
-    "TFG": (11.47, 197.39),
-    # variables sin límite documentado: se dejan sin clip
+    "c_total":       (0,     550.0),
+    "creatinina":    (0,     2.0),
+    "glucosa":       (25.0,  492.0),
+    "hdl":           (0,     120.0),
+    "hemoglobina":   (7.0,   21.0),
+    "ldl":           (0,     404.6),
+    "trigliceridos": (0,     420.0),
+    "edad":          (6,     110),
+    "ta_sistolica":  (60.5,  220.0),
+    "ta_diastolica": (40.0,  120.0),
+    "peso":          (9.0,   170.0),
+    "talla":         (1.27,  1.97),   # en METROS
+    "imc":           (4.51,  60.0),
+    "TFG":           (11.47, 197.39),
 }
 
 
 def _aplicar_clipping(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Aplica winsorización por límites clínicos a las columnas definidas.
-    Modifica el DataFrame in-place.
-    """
+    """Winsorización por límites clínicos expertos."""
     for col, (lim_inf, lim_sup) in LIMITES.items():
         if col in df.columns:
             df[col] = df[col].clip(lower=lim_inf, upper=lim_sup)
@@ -44,39 +32,61 @@ def _aplicar_clipping(df: pd.DataFrame) -> pd.DataFrame:
 
 def preparar_features(datos: PredictionInput) -> pd.DataFrame:
     """
-    Recibe los datos validados del nuevo schema de entrada y retorna un
-    DataFrame con las 22 columnas en el orden exacto que espera el modelo.
+    Recibe los datos validados del schema de entrada y retorna un DataFrame
+    preprocesado listo para escalar y proyectar con PCA.
+
+    Pipeline:
+        1. Construir fila con todos los campos del input
+        2. Convertir talla de cm (frontend) a metros
+        3. Reordenar columnas según columnas_modelo.pkl
+        4. Winsorización con límites clínicos
+        5. Imputación KNN (por si llega algún nulo)
     """
-    # Construir diccionario con todas las claves
+    artifacts = get_artifacts()
+    columnas  = artifacts["columnas"]   # lista cargada de columnas_modelo.pkl
+    imputer   = artifacts["imputer"]    # KNNImputer entrenado
+
+    # 1. Construir fila completa desde el input
     fila = {
-        "creatinina": datos.creatinina,
-        "celulas_medias": datos.celulas_medias,
-        "glucosa": datos.glucosa,
-        "granulocitos": datos.granulocitos,
-        "hdl": datos.hdl,
-        "hematocrito": datos.hematocrito,
-        "hemoglobina": datos.hemoglobina,
-        "ldl": datos.ldl,
-        "leucocitos": datos.leucocitos,
-        "linfocitos": datos.linfocitos,
-        "plaquetas": datos.plaquetas,
-        "trigliceridos": datos.trigliceridos,
-        "edad": datos.edad,
-        "sexo": datos.sexo,
-        "zona": datos.zona,
+        "c_total":        datos.c_total        if hasattr(datos, "c_total") else np.nan,
+        "creatinina":     datos.creatinina,
+        "glucosa":        datos.glucosa,
+        "hdl":            datos.hdl,
+        "hemoglobina":    datos.hemoglobina,
+        "ldl":            datos.ldl,
+        "leucocitos":     datos.leucocitos,
+        "plaquetas":      datos.plaquetas,
+        "trigliceridos":  datos.trigliceridos,
+        "edad":           datos.edad,
+        "sexo":           datos.sexo,
+        "zona":           datos.zona,
         "ap_hipertension": datos.ap_hipertension,
-        "ta_sistolica": datos.ta_sistolica,
-        "ta_diastolica": datos.ta_diastolica,
-        "peso": datos.peso,
-        "talla": datos.talla,
-        "imc": datos.imc,
-        "TFG": datos.TFG,
+        "ta_sistolica":   datos.ta_sistolica,
+        "ta_diastolica":  datos.ta_diastolica,
+        "peso":           datos.peso,
+        "talla":          datos.talla,
+        "imc":            datos.imc,
+        "TFG":            datos.TFG,
     }
 
-    # Crear DataFrame y asegurar el orden correcto
-    df = pd.DataFrame([fila])[FEATURE_ORDER]
+    df = pd.DataFrame([fila])
 
-    # Aplicar clipping
+    # 2. Convertir talla de cm → metros (el frontend envía cm)
+    if "talla" in df.columns:
+        df["talla"] = df["talla"] / 100.0
+
+    # 3. Reordenar columnas exactamente como en el entrenamiento
+    #    — añadir con NaN las columnas que pudieran faltar en el input
+    for col in columnas:
+        if col not in df.columns:
+            df[col] = np.nan
+    df = df[columnas]
+
+    # 4. Winsorización
     df = _aplicar_clipping(df)
+
+    # 5. Imputación KNN (cubre cualquier nulo que llegue)
+    cols_num = df.select_dtypes(include=[np.number]).columns.tolist()
+    df[cols_num] = imputer.transform(df[cols_num])
 
     return df

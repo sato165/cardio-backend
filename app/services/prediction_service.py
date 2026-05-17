@@ -11,34 +11,44 @@ from app.ml.framingham_calculator import calcular_framingham, campos_faltantes_f
 from app.ml.scc_calculator import calcular_scc
 
 
+# Campos obligatorios alineados con columnas_modelo.pkl — modelo final k=4
+CAMPOS_OBLIGATORIOS = [
+    "c_total", "creatinina", "glucosa", "hdl", "hemoglobina",
+    "ldl", "leucocitos", "plaquetas", "trigliceridos",
+    "edad", "sexo", "zona", "ap_hipertension",
+    "ta_sistolica", "ta_diastolica", "peso", "talla", "imc", "TFG"
+]
+
+# Rangos de validación — talla en cm (como llega del frontend)
 RANGOS_VALIDACION = {
-    "creatinina": (0, 2.0),
-    "celulas_medias": (0, 20.0),
-    "glucosa": (25.0, 492.0),
-    "granulocitos": (0, 100),
-    "hdl": (0, 120.0),
-    "hematocrito": (14.0, 63.0),
-    "hemoglobina": (7.0, 21.0),
-    "ldl": (0, 404.6),
-    "leucocitos": (0, None),
-    "linfocitos": (0, 100),
-    "plaquetas": (0, None),
-    "trigliceridos": (0, 420.0),
-    "edad": (6, 110),
-    "ta_sistolica": (60.5, 220.0),
-    "ta_diastolica": (40.0, 120.0),
-    "peso": (9.0, 170.0),
-    "talla": (1.27, 1.97),
-    "imc": (4.51, 60.0),
-    "TFG": (11.47, 197.39),
+    "c_total":        (0,      550.0),
+    "creatinina":     (0,      2.0),
+    "glucosa":        (25.0,   492.0),
+    "hdl":            (0,      120.0),
+    "hemoglobina":    (7.0,    21.0),
+    "ldl":            (0,      404.6),
+    "leucocitos":     (0,      None),
+    "plaquetas":      (0,      None),
+    "trigliceridos":  (0,      420.0),
+    "edad":           (6,      110),
+    "ta_sistolica":   (60.5,   220.0),
+    "ta_diastolica":  (40.0,   120.0),
+    "peso":           (9.0,    170.0),
+    "talla":          (127.0,  197.0),   # cm
+    "imc":            (4.51,   60.0),
+    "TFG":            (11.47,  197.39),
 }
 
+
+# ─────────────────────────────────────────────
+# Predicción desde formulario manual
+# ─────────────────────────────────────────────
 
 def predecir_desde_formulario(datos: PredictionInput) -> PredictionOutput:
     features  = preparar_features(datos)
     resultado = predecir(features)
 
-    probabilidades = [ClusterProb(**p) for p in resultado["probabilities"]]
+    probabilidades     = [ClusterProb(**p) for p in resultado["probabilities"]]
     riesgo_comparativo = _calcular_comparativo(datos)
 
     return PredictionOutput(
@@ -52,10 +62,10 @@ def predecir_desde_formulario(datos: PredictionInput) -> PredictionOutput:
 
 def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
     datos_fram = {
-        "colesterol_total_mgdl": datos.colesterol_total_mgdl,
-        "diabetes": datos.diabetes,
+        "colesterol_total_mgdl":        datos.colesterol_total_mgdl,
+        "diabetes":                     datos.diabetes,
         "tratamiento_antihipertensivo": datos.tratamiento_antihipertensivo,
-        "fuma": datos.fuma,
+        "fuma":                         datos.fuma,
     }
     faltantes = [k for k, v in datos_fram.items() if v is None]
     if faltantes:
@@ -98,33 +108,30 @@ def _calcular_comparativo(datos: PredictionInput) -> RiesgoComparativo:
     )
 
 
+# ─────────────────────────────────────────────
+# Predicción desde extracción de archivo
+# ─────────────────────────────────────────────
+
 def predecir_desde_extraccion(campos: dict) -> UploadOutput:
+
+    # 1. Verificar campos obligatorios faltantes
     faltantes = []
-    obligatorios = [
-        "creatinina", "celulas_medias", "glucosa", "granulocitos",
-        "hdl", "hematocrito", "hemoglobina", "ldl", "leucocitos",
-        "linfocitos", "plaquetas", "trigliceridos", "edad",
-        "sexo", "zona", "ap_hipertension", "ta_sistolica",
-        "ta_diastolica", "peso", "talla", "imc", "TFG"
-    ]
-    for campo in obligatorios:
+    for campo in CAMPOS_OBLIGATORIOS:
         if campo not in campos or campos[campo] is None:
             faltantes.append({
                 "campo": campo,
                 "descripcion": f"Campo obligatorio '{campo}' faltante"
             })
 
+    # 2. Construir DatosPaciente con las variables del modelo final
     datos_paciente = DatosPaciente(
+        c_total=campos.get("c_total"),
         creatinina=campos.get("creatinina"),
-        celulas_medias=campos.get("celulas_medias"),
         glucosa=campos.get("glucosa"),
-        granulocitos=campos.get("granulocitos"),
         hdl=campos.get("hdl"),
-        hematocrito=campos.get("hematocrito"),
         hemoglobina=campos.get("hemoglobina"),
         ldl=campos.get("ldl"),
         leucocitos=campos.get("leucocitos"),
-        linfocitos=campos.get("linfocitos"),
         plaquetas=campos.get("plaquetas"),
         trigliceridos=campos.get("trigliceridos"),
         edad=campos.get("edad"),
@@ -151,18 +158,16 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             mensaje=f"Faltan {len(faltantes)} campo(s) obligatorio(s).",
         )
 
+    # 3. Validar con PredictionInput y capturar errores de rango
     try:
         input_datos = PredictionInput(
+            c_total=campos["c_total"],
             creatinina=campos["creatinina"],
-            celulas_medias=campos["celulas_medias"],
             glucosa=campos["glucosa"],
-            granulocitos=campos["granulocitos"],
             hdl=campos["hdl"],
-            hematocrito=campos["hematocrito"],
             hemoglobina=campos["hemoglobina"],
             ldl=campos["ldl"],
             leucocitos=campos["leucocitos"],
-            linfocitos=campos["linfocitos"],
             plaquetas=campos["plaquetas"],
             trigliceridos=campos["trigliceridos"],
             edad=campos["edad"],
@@ -193,11 +198,12 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
                 elif maxi is not None:
                     rango_str = f"≤ {maxi}"
                 else:
-                    rango_str = ""
+                    rango_str = "sin límite definido"
                 desc = f"Valor fuera de rango ({error.get('input')}). Rango aceptable: {rango_str}."
             else:
                 desc = f"Valor inválido ({error.get('input')}): {error['msg']}"
             campos_invalidos.append(CampoFaltante(campo=campo, descripcion=desc))
+
         return UploadOutput(
             campos_faltantes=campos_invalidos,
             prediccion=None,
@@ -205,6 +211,7 @@ def predecir_desde_extraccion(campos: dict) -> UploadOutput:
             mensaje="Algunos campos tienen valores inválidos.",
         )
 
+    # 4. Ejecutar predicción completa
     prediccion = predecir_desde_formulario(input_datos)
     return UploadOutput(
         campos_faltantes=[],
