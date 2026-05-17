@@ -5,54 +5,80 @@ from app.ml.model_loader import get_artifacts
 
 def compute_shap_values(features_array: np.ndarray) -> np.ndarray:
     """
-    Calcula valores SHAP para cada feature original y cada clase (4 clusters).
+    Calcula valores SHAP aproximados en espacio de features originales para
+    cada feature y cada una de las 4 clases del modelo final (k=4).
 
-    Entrada:
-        features_array: (n, n_features) — valores ya winsorizados e imputados,
-                        en el orden de columnas_modelo.pkl
+    Pipeline:
+        features_array  →  StandardScaler  →  PCA(11)  →  RandomForest
 
-    Salida:
-        shap_original: (n, n_features, 4) — contribuciones en unidades originales
+    La retropropagación SHAP sigue el camino inverso:
+        shap_pca  ---(PCA^T)-->  shap_scaled  ---(1/scale)-->  shap_original
+
+    Parámetros
+    ----------
+    features_array : np.ndarray, shape (n, n_features)
+        Valores ya winsorizados e imputados, en el orden de columnas_modelo.pkl.
+
+    Retorna
+    -------
+    shap_original : np.ndarray, shape (n, n_features, 4)
+        Contribuciones SHAP por feature y por clase, en unidades originales.
     """
     artifacts = get_artifacts()
     scaler    = artifacts["scaler"]
     pca       = artifacts["pca"]
     explainer = artifacts["explainer"]
 
-    n_classes = 4   # k=4 clusters — modelo final
+    n_classes   = 4          # k=4 clusters — modelo final
+    n_pca_comps = pca.n_components_   # 11
 
-    # 1. Estandarizar
-    X_scaled = scaler.transform(features_array)        # (n, n_features)
+    # ── 1. Estandarizar ────────────────────────────────────────────────────
+    X_scaled = scaler.transform(features_array)   # (n, n_features)
 
-    # 2. Proyectar con PCA (11 componentes)
-    X_pca = pca.transform(X_scaled)                    # (n, 11)
+    # ── 2. Proyectar con PCA ───────────────────────────────────────────────
+    X_pca = pca.transform(X_scaled)               # (n, n_pca_comps)
 
-    # 3. SHAP en espacio PCA con TreeExplainer
-    shap_pca = explainer.shap_values(X_pca)            # lista de 4 arrays (n, 11)
+    # ── 3. SHAP en espacio PCA ─────────────────────────────────────────────
+    # check_additivity=False evita falsos errores por la aproximación lineal
+    # introducida al retropropagar a través de PCA.
+    shap_raw = explainer.shap_values(X_pca, check_additivity=False)
 
-    if isinstance(shap_pca, list):
-        # Multiclase: lista de n_classes arrays (n, 11) → (n, 11, n_classes)
-        shap_pca = np.stack(shap_pca, axis=-1)
-    elif isinstance(shap_pca, np.ndarray) and shap_pca.ndim == 2:
-        # Binario o single-output inesperado: expandir dimensión de clase
-        shap_pca = shap_pca[:, :, np.newaxis]
+    # Normalizar a array (n, n_pca_comps, n_classes)
+    if isinstance(shap_raw, list):
+        # Multiclase estándar: lista de n_classes arrays (n, n_pca_comps)
+        if len(shap_raw) != n_classes:
+            raise ValueError(
+                f"Se esperaban {n_classes} clases pero TreeExplainer devolvió "
+                f"{len(shap_raw)}. ¿El modelo es k=4?"
+            )
+        shap_pca = np.stack(shap_raw, axis=-1)   # (n, n_pca_comps, n_classes)
+    elif isinstance(shap_raw, np.ndarray):
+        if shap_raw.ndim == 3 and shap_raw.shape[-1] == n_classes:
+            shap_pca = shap_raw                  # ya tiene el formato correcto
+        elif shap_raw.ndim == 2:
+            # Single-output inesperado → añadir dimensión de clase
+            shap_pca = shap_raw[:, :, np.newaxis]
+        else:
+            raise ValueError(
+                f"Formato SHAP inesperado: shape={shap_raw.shape}"
+            )
+    else:
+        raise TypeError(f"Tipo SHAP no reconocido: {type(shap_raw)}")
 
-    # Validar que tenemos las 4 clases
-    if shap_pca.shape[-1] != n_classes:
-        raise ValueError(
-            f"Se esperaban {n_classes} clases en SHAP pero se obtuvieron "
-            f"{shap_pca.shape[-1]}. Verifica que el modelo sea k=4."
-        )
+    # ── 4. Retropropagar PCA → features escaladas ──────────────────────────
+    # X_pca = X_scaled @ V^T   donde V = pca.components_ (n_pca_comps, n_features)
+    # Por linealidad:
+    #   shap_scaled[n, p, c] = Σ_f  shap_pca[n, f, c] * V[f, p]
+    #
+    # einsum: n=batch, f=n_pca_comps, c=n_classes, p=n_features
+    V = pca.components_                          # (n_pca_comps, n_features)
+    shap_scaled = np.einsum('nfc,fp->npc', shap_pca, V)   # (n, n_features, 4)
 
-    # 4. Mapeo lineal PCA → features originales escaladas
-    #    X_pca = X_scaled @ componentes.T
-    #    ⟹ shap_scaled = shap_pca @ componentes   (por clase)
-    #    einsum: n=batch, f=11 PCA, c=4 clases, p=n_features originales
-    componentes  = pca.components_                     # (11, n_features)
-    shap_scaled  = np.einsum('nfc,fp->npc', shap_pca, componentes)  # (n, n_features, 4)
+    # ── 5. Deshacer estandarización → unidades originales ─────────────────
+    # X_scaled = (X - mean) / scale  →  shap_original = shap_scaled / scale
+    # scale tiene shape (n_features,); necesitamos (1, n_features, 1) para
+    # dividir correctamente el array (n, n_features, 4).
+    scale = scaler.scale_                        # (n_features,)
+    shap_original = shap_scaled / scale[np.newaxis, :, np.newaxis]
 
-    # 5. Deshacer estandarización: dividir por std de cada feature
-    scale         = scaler.scale_                      # (n_features,)
-    shap_original = shap_scaled / scale[:, np.newaxis] # (n, n_features, 4)
-
-    return shap_original
+    return shap_original   # (n, n_features, 4)
